@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<!--
+  WINDOW SPREAD LAB
+  =================
+  A test bench for "show all windows" (spread / exposé) layouts, made while designing a
+  replacement for Cinnamon's Scale view.
+
+  File structure
+    <style>              Lab page styling.
+    <body> markup        Lab page: toolbar, simulated desktop, settings panel.
+    <script src=...>     THE LAYOUT ENGINE, loaded from
+                         ../extension/window-spread@soren-kragh/spreadLayout.js: the same file the
+                         Cinnamon extension uses (there is no other copy). Its default settings
+                         ("knobs") are in section 1 of that file. Keep the window-spread folder
+                         structure intact so this page can find it.
+    <script id="lab">    Lab page mechanics: simulated windows, settings panel, comparison view,
+                         measurements, settings tuner. Uses the engine only through its public
+                         API. Not needed in Cinnamon.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Window spread lab</title>
+<style>
+/* ---------- theme ---------- */
+:root{
+  color-scheme: light;
+  --bg:#e4e8ec; --panel:#f6f7f8; --ink:#1e252c; --muted:#5d6872; --line:#cfd5db;
+  --accent:#2c6db3; --accent-ink:#ffffff; --field:#ffffff;
+  --desk1:#4a5f75; --desk2:#2a3949; --gridline:rgba(255,255,255,.07);
+  --win:#fbfbfa; --win-ink:#2a3036; --win-soft:#e9ecef; --win-line:#b9c0c7;
+  --shadow:0 8px 22px rgba(8,18,28,.32);
+  --ghost:rgba(255,255,255,.55); --trail:rgba(255,206,92,.9);
+  --tip-bg:#22303d; --tip-ink:#eef2f5;
+  --dur:350ms;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#13171b; --panel:#1b2025; --ink:#e2e7eb; --muted:#99a4ae; --line:#2f363d;
+    --accent:#6fa8e8; --accent-ink:#0c1a29; --field:#232a31;
+    --desk1:#263443; --desk2:#121a23;
+    --win:#272d33; --win-ink:#dfe4e8; --win-soft:#323940; --win-line:#454e57;
+    --shadow:0 8px 22px rgba(0,0,0,.55);
+    --tip-bg:#e7ecf0; --tip-ink:#17212b;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#13171b; --panel:#1b2025; --ink:#e2e7eb; --muted:#99a4ae; --line:#2f363d;
+  --accent:#6fa8e8; --accent-ink:#0c1a29; --field:#232a31;
+  --desk1:#263443; --desk2:#121a23;
+  --win:#272d33; --win-ink:#dfe4e8; --win-soft:#323940; --win-line:#454e57;
+  --shadow:0 8px 22px rgba(0,0,0,.55);
+  --tip-bg:#e7ecf0; --tip-ink:#17212b;
+}
+@media (prefers-reduced-motion: reduce){ :root{--dur:0ms} }
+
+/* ---------- page layout: main area (toolbar, desktop, measurements) + settings panel ---------- */
+*{box-sizing:border-box}
+html,body{height:100%; margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Ubuntu,Cantarell,"Noto Sans",sans-serif;
+  display:grid; grid-template-columns:minmax(0,1fr) 340px; overflow:hidden;
+}
+#main{display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-height:0; min-width:0}
+#toolbar{display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:10px 14px 0}
+#toolbar .grp{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+#toolbar .grp + .grp{padding-left:10px; border-left:1px solid var(--line)}
+#toolbar select{width:auto; padding:5px 6px; font-size:13px}
+#toolbar .chk{margin:0}
+#wrap{position:relative; overflow:hidden; min-height:0}
+/* fixed height, so the desktop above never resizes when measurements appear */
+#statsbar{
+  display:flex; flex-wrap:wrap; align-items:center; align-content:flex-start; gap:4px 16px;
+  height:84px; padding:6px 14px 8px; overflow-y:auto;
+  font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums;
+}
+#statsbar .it{display:inline-flex; align-items:center; gap:5px; white-space:nowrap}
+#statsbar b{color:var(--ink); font-weight:600}
+.score{
+  display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px; white-space:nowrap;
+  background:var(--accent); color:var(--accent-ink); font-size:13px; border:1px solid var(--accent);
+}
+#statsbar .score b, .score b{color:inherit; font-size:15px; font-weight:700}
+.score.plain{background:transparent; color:var(--ink); border-color:var(--line)}
+
+/* ---------- simulated desktop ---------- */
+#stage{
+  position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:0 0;
+  background:
+    linear-gradient(var(--gridline) 1px, transparent 1px) 0 0/120px 120px,
+    linear-gradient(90deg, var(--gridline) 1px, transparent 1px) 0 0/120px 120px,
+    radial-gradient(ellipse at 30% 20%, var(--desk1), var(--desk2));
+  border-radius:6px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,.25);
+}
+#dim{position:absolute; inset:0; background:rgba(5,10,16,.45); opacity:0; transition:opacity var(--dur); pointer-events:none; z-index:0}
+#stage.exploded #dim{opacity:1}
+#empty{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.7); font-size:34px; pointer-events:none}
+#hot{position:absolute; left:0; top:0; width:18px; height:18px; z-index:200000}
+#hot.on{background:radial-gradient(circle at 0 0, rgba(255,206,92,.7), transparent 70%)}
+#overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:100000}
+
+/* simulated windows */
+.win{
+  position:absolute; background:var(--win); color:var(--win-ink);
+  border:1px solid var(--win-line); border-radius:9px; box-shadow:var(--shadow);
+  transform-origin:0 0; transition:transform var(--dur) cubic-bezier(.2,.8,.2,1), opacity var(--dur); user-select:none;
+}
+.win.minimized{opacity:0; pointer-events:none}
+.win.dragging{transition:none}
+.bar{
+  height:44px; display:flex; align-items:center; gap:12px; padding:0 8px 0 16px;
+  border-bottom:1px solid var(--win-line); border-radius:9px 9px 0 0; cursor:grab;
+  background:var(--win-soft); font-size:20px; font-weight:600;
+}
+.dot{width:16px; height:16px; border-radius:4px; flex:none}
+.title{flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.dims{font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; font-size:17px}
+.wbtn{width:32px; height:32px; border:0; border-radius:6px; background:transparent; color:inherit; font-size:24px; line-height:1; cursor:pointer}
+.wbtn:hover{background:rgba(127,127,127,.25)}
+.close:hover{background:rgba(200,60,50,.85); color:#fff}
+.body{position:absolute; top:44px; left:0; right:0; bottom:0; overflow:hidden; padding:20px; border-radius:0 0 9px 9px}
+.ln{height:12px; border-radius:6px; background:var(--win-soft); margin-bottom:14px}
+.h{position:absolute; z-index:2} /* resize handles */
+.h.n{top:-6px; left:14px; right:14px; height:12px; cursor:ns-resize}
+.h.s{bottom:-6px; left:14px; right:14px; height:12px; cursor:ns-resize}
+.h.e{right:-6px; top:14px; bottom:14px; width:12px; cursor:ew-resize}
+.h.w{left:-6px; top:14px; bottom:14px; width:12px; cursor:ew-resize}
+.h.ne{right:-8px; top:-8px; width:22px; height:22px; cursor:nesw-resize}
+.h.sw{left:-8px; bottom:-8px; width:22px; height:22px; cursor:nesw-resize}
+.h.nw{left:-8px; top:-8px; width:22px; height:22px; cursor:nwse-resize}
+.h.se{right:-8px; bottom:-8px; width:22px; height:22px; cursor:nwse-resize}
+#stage.exploded .h, #stage.exploded .wbtn{display:none}
+#stage.exploded .bar, #stage.exploded .win{cursor:pointer}
+#stage.exploded .win:hover{outline:6px solid var(--accent); outline-offset:4px}
+
+/* comparison view: four panels instead of the desktop */
+#compare{position:absolute; inset:0; display:none; padding:14px; gap:12px; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr}
+#wrap.comparing #compare{display:grid}
+#wrap.comparing #stage{visibility:hidden}
+.cmp{display:flex; flex-direction:column; min-height:0; min-width:0; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:8px; cursor:pointer}
+.cmp:hover{border-color:var(--accent)}
+.cmp.sel{border:2px solid var(--accent); padding:7px 9px}
+.cmp-head{display:flex; align-items:baseline; gap:10px; margin-bottom:6px}
+.cmp-head .score{margin-left:auto}
+.cmp-name{font-weight:650; font-size:14px}
+.cmp-tag{color:var(--accent); font-size:12px}
+.cmp svg{flex:1; min-height:0; width:100%; display:block}
+.cmp-stats{display:flex; flex-wrap:wrap; gap:2px 14px; margin-top:6px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
+.cmp-stats b{color:var(--ink); font-weight:600}
+
+/* ---------- settings panel ---------- */
+aside{background:var(--panel); border-left:1px solid var(--line); overflow-y:auto; padding:14px 16px 16px}
+.top{display:flex; align-items:center; gap:8px; margin-bottom:10px}
+h1{margin:0; font-size:18px; font-weight:650; letter-spacing:-.01em}
+h2{display:flex; align-items:center; gap:6px; margin:16px 0 6px; font-size:13.5px; font-weight:650}
+button.b{font:inherit; font-size:13px; padding:6px 10px; border-radius:6px; cursor:pointer; border:1px solid var(--line); background:var(--field); color:var(--ink)}
+button.b:hover{border-color:var(--accent)}
+button.b.small{margin:4px 0 2px; padding:3px 8px; font-size:12px}
+#reset{margin-left:auto; padding:4px 9px}
+#explode{width:100%; padding:9px; margin-bottom:6px; font-size:15px; font-weight:600; border-radius:8px; cursor:pointer; border:0; background:var(--accent); color:var(--accent-ink)}
+button:focus-visible, select:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+select{width:100%; font:inherit; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--field); color:var(--ink)}
+.sub{display:flex; align-items:center; gap:6px; font-size:13px}
+.sub .chk{margin:2px 0}
+.sub + .sub{margin-top:-2px}
+.keys{margin-left:auto; color:var(--muted); font-size:12px}
+.chk{display:flex; align-items:center; gap:8px; font-size:13px}
+.chk input{accent-color:var(--accent)}
+#algoParams{margin-top:6px}
+/* one setting per row: name (i) | slider | value */
+.prow{display:grid; grid-template-columns:120px minmax(0,1fr) 46px; align-items:center; gap:8px; min-height:27px}
+.prow .nm{display:flex; align-items:center; gap:5px; font-size:13px; white-space:nowrap}
+.prow input[type=range]{width:100%; margin:0; accent-color:var(--accent)}
+.prow output{font-size:12px; color:var(--muted); text-align:right; font-variant-numeric:tabular-nums}
+.prow select{grid-column:2 / 4; padding:3px 6px; font-size:13px}
+.checks{display:flex; flex-wrap:wrap; gap:0 14px}
+.checks .ck{display:inline-flex; align-items:center; gap:4px}
+.checks .chk{margin:4px 0}
+/* tuner */
+#tuner{margin-top:8px; padding-top:8px; border-top:1px solid var(--line)}
+.trow{display:flex; align-items:center; gap:6px}
+#tuneBtn.on{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+#tuneDetails summary{cursor:pointer; font-size:12.5px; color:var(--muted); margin:6px 0 2px}
+#tuneStatus{margin-top:4px; font-size:12px; line-height:1.45; color:var(--muted); font-variant-numeric:tabular-nums}
+
+/* ---------- info buttons and popup ---------- */
+button.info{
+  flex:none; width:17px; height:17px; padding:0; border-radius:50%;
+  border:1px solid var(--line); background:var(--field); color:var(--muted);
+  font:italic 700 11px/15px Georgia,"Times New Roman",serif; cursor:pointer; text-align:center;
+}
+button.info::before{content:"i"}
+button.info:hover, button.info[aria-expanded="true"]{border-color:var(--accent); color:var(--accent)}
+#tip{
+  position:fixed; z-index:1000; max-width:290px; padding:10px 12px; border-radius:8px;
+  background:var(--tip-bg); color:var(--tip-ink); font-size:13px; line-height:1.45; box-shadow:0 8px 24px rgba(0,0,0,.28);
+}
+#tip[hidden]{display:none}
+#tip p{margin:0 0 6px}
+#tip p:last-child{margin-bottom:0}
+
+/* ---------- narrow screens: settings below the desktop ---------- */
+@media (max-width:900px){
+  body{grid-template-columns:1fr; grid-template-rows:75vh auto; overflow:auto}
+  aside{border-left:0; border-top:1px solid var(--line)}
+  #compare{grid-template-columns:1fr; grid-template-rows:none; grid-auto-rows:minmax(240px, 1fr); overflow-y:auto}
+}
+</style>
+</head>
+<body>
+<!-- ===================== LAB PAGE MARKUP ===================== -->
+<div id="main">
+  <div id="toolbar">
+    <div class="grp">
+      <button class="b" id="add">Add window</button>
+      <button class="b" id="add5">Add 5</button>
+      <button class="b" id="clear">Remove all</button>
+      <select id="scenario" aria-label="Load a scenario">
+        <option value="">Load a scenario…</option>
+        <option value="workday">Workday</option>
+        <option value="stacked">Near-maximized pile</option>
+        <option value="cascade">Cascade</option>
+        <option value="small">Many small</option>
+        <option value="mixed">Random mix</option>
+      </select>
+      <button class="b" id="shuffleZ">Test: shuffle stacking</button>
+      <button class="info" type="button" data-info="windows" aria-label="About the desktop controls"></button>
+    </div>
+    <div class="grp">
+      <label class="chk"><input type="checkbox" id="ghosts" checked> Outlines</label>
+      <label class="chk"><input type="checkbox" id="trails" checked> Movement lines</label>
+      <label class="chk"><input type="checkbox" id="hotOn" checked> Hot corner</label>
+      <button class="info" type="button" data-info="display" aria-label="About display options"></button>
+    </div>
+  </div>
+  <div id="wrap">
+    <div id="stage">
+      <div id="dim"></div>
+      <div id="empty">Add a window to start</div>
+      <svg id="overlay" viewBox="0 0 1920 1080" preserveAspectRatio="none"></svg>
+      <div id="hot" title="Hot corner"></div>
+    </div>
+    <div id="compare"></div>
+  </div>
+  <div id="statsbar" aria-live="polite"></div>
+</div>
+
+<aside>
+  <div class="top"><h1>Window spread lab</h1><button class="info" type="button" data-info="about" aria-label="About this page"></button>
+    <button class="b" id="reset">Reset settings</button></div>
+  <button id="explode">Show all windows</button>
+  <div class="sub">
+    <label class="chk"><input type="checkbox" id="compareAll"> Compare all four</label>
+    <button class="info" type="button" data-info="compare" aria-label="About comparing algorithms"></button>
+    <span class="keys">E toggles, Esc closes</span>
+  </div>
+  <div class="sub">
+    <label class="chk"><input type="checkbox" id="useCache" checked> Use layout cache</label>
+    <button class="info" type="button" data-info="cache" aria-label="About the layout cache"></button>
+  </div>
+
+  <h2>Algorithm <button class="info" type="button" id="algoInfo" aria-label="About the selected algorithm"></button></h2>
+  <select id="algo" aria-label="Algorithm"></select>
+  <div id="algoParams"></div>
+
+  <h2>Scoring <button class="info" type="button" data-info="scoring" aria-label="About scoring"></button></h2>
+  <div id="scoreParams"></div>
+
+  <h2>Common settings <button class="info" type="button" data-info="common" aria-label="About common settings"></button></h2>
+  <div id="commonParams"></div>
+</aside>
+<div id="tuner" hidden>
+  <div class="trow">
+    <button class="b" id="tuneBtn">Start tuning</button>
+    <button class="info" type="button" data-info="tuner" aria-label="About tuning"></button>
+  </div>
+  <details id="tuneDetails"><summary id="tuneSummary"></summary><div id="tuneOpts"></div></details>
+  <div id="tuneStatus"></div>
+</div>
+<div id="tip" role="status" hidden></div>
+
+<script src="../extension/window-spread@soren-kragh/spreadLayout.js"></script>
+
+<script id="lab">
+/* ==========================================================================
+   LAB PAGE
+   ==========================================================================
+   Everything in this block is the lab page around the engine: a simulated
+   desktop, the settings panel, the comparison view, measurements and the
+   settings tuner. None of it is needed in Cinnamon. The engine itself is loaded
+   from ../extension/window-spread@soren-kragh/spreadLayout.js, the same file the
+   extension uses, and is used only through its public API.
+
+   Sections
+     L1. Lab constants and state
+     L2. Settings panel metadata: label, range and explanation for every knob
+     L3. Help texts
+     L4. Settings panel
+     L5. Running layouts and measurements
+     L6. Drawing: desktop overlay and comparison view
+     L7. Simulated windows and scenarios
+     L8. Optimizer settings tuner (Web Workers)
+     L9. Page wiring: spread toggle, hot corner, keys, info popups, resizing
+   ========================================================================== */
+"use strict";
+
+// The engine is loaded by the <script src> above. If the page was opened outside the
+// window-spread folder, it can't be found: say so instead of failing silently.
+if (typeof SpreadLayout === "undefined") {
+  document.body.innerHTML = '<div style="padding:2em;font:16px/1.5 system-ui,sans-serif;max-width:40em">' +
+    '<h1 style="font-size:20px">Layout engine not found</h1>' +
+    '<p>This page loads the layout engine from <code>../extension/window-spread@soren-kragh/spreadLayout.js</code>. ' +
+    'Open it from inside the <code>window-spread</code> folder (in <code>lab/</code>), keeping the folder structure intact.</p></div>';
+  throw new Error("SpreadLayout engine not found");
+}
+
+/* --------------------------------------------------------------------------
+   L1. LAB CONSTANTS AND STATE
+   -------------------------------------------------------------------------- */
+const SCREEN = { x: 0, y: 0, w: 1920, h: 1080 }; // the simulated monitor
+const SCREEN_DIAG = Math.hypot(SCREEN.w, SCREEN.h);
+const MIN_WIN_W = 160, MIN_WIN_H = 100;        // smallest size a simulated window can be resized to
+const LAB_DEFAULTS = { duration: 350 };         // lab-only setting (animation length); Cinnamon animates on its own
+const APPS = [
+  ["Firefox", "#e0662c"], ["Terminal", "#3b4046"], ["Files", "#3e8ed0"], ["Text Editor", "#5f9a37"],
+  ["Chat", "#8758c2"], ["Mail", "#c4443b"], ["Calculator", "#cf9726"], ["Music", "#cc4487"],
+  ["Settings", "#58798b"], ["Image Viewer", "#2aa196"], ["PDF Reader", "#b1502c"], ["System Monitor", "#4a6cd4"]
+];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const stage = document.getElementById("stage");
+const wrap = document.getElementById("wrap");
+const overlay = document.getElementById("overlay");
+
+const els = new Map();                 // window id -> DOM element
+let wins = [], nextId = 1, zTop = 1;   // simulated windows; z is used for drawing only, never for layout
+let stageScale = 1;                    // CSS scale of the 1920×1080 desktop in the page
+let exploded = false;                  // spread is open
+let comparing = false;                 // spread is open and shows all four algorithms
+let targets = null;                    // id -> thumbnail rect of the selected algorithm, while exploded
+
+// Current settings. P holds common + scoring settings (plus lab-only ones); algoParams
+// holds each algorithm's own settings, so switching algorithms keeps them.
+const P = { ...SpreadLayout.DEFAULTS.common, ...SpreadLayout.DEFAULTS.scoring, ...LAB_DEFAULTS };
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) P.duration = 0;
+const algoParams = Object.fromEntries(SpreadLayout.ALGORITHMS.map(k => [k, { ...SpreadLayout.DEFAULTS[k] }]));
+let algo = "anneal"; // algorithm selected when the page opens
+
+/* --------------------------------------------------------------------------
+   L2. SETTINGS PANEL METADATA
+   How each knob appears in the panel. Default values come from
+   SpreadLayout.DEFAULTS (or LAB_DEFAULTS for lab-only items), never from here.
+   Fields: k (setting key), label, min/max/step (sliders), type "check"/"select",
+   options, unit, kfmt (show thousands as "k"), zero (label for 0), showIf (only
+   shown when true), uniformOnly (hidden for the equal grid), info (help text).
+   -------------------------------------------------------------------------- */
+const START_NAMES = { push: "push-apart", rows: "ordered rows", grid: "equal grid", none: "real positions" };
+const POLISH_INFO = "After the layout is done, tries moving each thumbnail a little in eight directions, with ever smaller steps, and keeps only moves that improve the score. A thumbnail only moves into free space: it never gets closer to a neighbor than the gap setting, never overlaps, and never leaves the screen area. This removes leftover slack, such as a window that could obviously sit closer to where it really is.";
+
+const ALGO_UI = { // order here = order in the menu
+  natural: {
+    name: "Push apart, then scale (natural)",
+    desc: "Starts every window at its real position and size, pushes overlapping pairs apart until nothing overlaps, then shrinks the whole arrangement uniformly to fit the screen. Fast and simple; it doesn't use the scoring weights except in the optional polish.",
+    params: [
+      { k: "iterations", label: "Effort", min: 10, max: 5000, step: 10,
+        info: "The most passes the algorithm may make. In each pass, every overlapping pair of windows is nudged apart. It stops early as soon as nothing overlaps, so this only matters for crowded desktops. If the limit is hit, some thumbnails may still overlap (see Overlaps)." },
+      { k: "step", label: "Push strength", min: 0.05, max: 1, step: 0.05,
+        info: "How far each nudge moves an overlapping pair, as a fraction of the distance needed to separate them. Low values take many small steps and tend to keep the arrangement closer to the original. High values finish in fewer passes but can push windows further than necessary." },
+      { k: "aspect", label: "Screen shape", min: 0, max: 1, step: 0.05,
+        info: "The screen is wide, but windows pushed apart often spread into a tall or square cluster, which then has to be shrunk a lot to fit. This biases the pushes sideways while the cluster is too tall, and vertically while it is too wide. At 0, windows are pushed purely along the line between their centers, which keeps relative positions best." },
+      { k: "polish", label: "Polish", type: "check", info: POLISH_INFO }
+    ]
+  },
+  anneal: {
+    name: "Optimizer (simulated annealing)",
+    desc: "Searches with random moves for the arrangement with the best score, as defined in the Scoring section. Several starts race each other and the weakest are dropped along the way. Never scores worse than push-apart or ordered rows with their current settings, as long as it starts from them (or from Mixed) and gap filling is off.",
+    params: [
+      { k: "iterations", label: "Effort", min: 1000, max: 200000, step: 1000, kfmt: true,
+        info: "How many random moves the search tries in total, shared among all parallel starts. Each move nudges one window. Moves that improve the score are kept; worse ones are sometimes kept early on, so the search can escape dead ends. More moves give better layouts but take longer (see Time)." },
+      { k: "restarts", label: "Parallel starts", min: 1, max: 16, step: 1,
+        info: "How many independent searches run side by side, each with its own random moves. A single search can settle into a poor arrangement just by luck; with several, the best one wins. The total effort stays the same, so more starts means fewer moves each unless weak starts are dropped early." },
+      { k: "checkpoint", label: "First checkpoint", min: 0.05, max: 0.95, step: 0.05,
+        info: "How far through the cooling (0 is the start, 1 the end) the starts run before the first round of dropping. Later checkpoints judge the starts more reliably, because early on the search is still hot and scores say little about where it will end. But then more moves are spent on starts that get dropped. Later checkpoints follow evenly up to the end. Only used when dropping weak starts." },
+      { k: "temp", label: "Temperature", min: 0.005, max: 0.5, step: 0.005,
+        info: "How willing the search is to accept a worse arrangement at the start. It cools to almost nothing by the end, so the final steps only improve. Too high and the search wanders off and runs out of time to settle; too low and it barely leaves its starting arrangement." },
+      { k: "startFrom", label: "Start from", type: "select",
+        options: [["push", "Push-apart"], ["rows", "Ordered rows"], ["grid", "Equal grid"], ["none", "Real positions"], ["mixed", "Mixed (one per start)"]],
+        info: "Where the search begins. Push-apart, Ordered rows and Equal grid begin from those layouts, using those algorithms' current settings (overlaps resolved first, since true-size windows can be too big for grid cells). Changing the push-apart or ordered-rows settings therefore also changes where the optimizer can start. Real positions begins from where the windows actually are, overlapping. Mixed gives the parallel starts different starting points in turn (push-apart, rows, grid, real positions, then again), so the race picks whichever works best for each desktop; Winning start then shows which one won. With one parallel start, Mixed means push-apart." },
+      { k: "seed", label: "Seed", min: 1, max: 100, step: 1,
+        info: "The starting point for the random moves. The same seed with the same settings always gives the same layout. Try a few seeds to see how much the result depends on luck; if it varies a lot, add parallel starts or raise the effort." },
+      { k: "bailout", label: "Drop weak starts", type: "check",
+        info: "Runs the starts as a race. At each checkpoint, the worse half (by best score so far) is stopped and its remaining moves go to the survivors, until one is left. The effort is then focused on the promising starts. With this off, every start gets an equal share of the effort and the best result is kept. Has no effect with one start." },
+      { k: "polish", label: "Polish", type: "check", info: POLISH_INFO }
+    ]
+  },
+  rows: {
+    name: "Ordered rows",
+    desc: "Packs windows into rows: top to bottom by vertical position, left to right within each row. Picks the row count that gives the largest uniform scale.",
+    params: [
+      { k: "rows", label: "Rows", min: 0, max: 8, step: 1, zero: "auto",
+        info: "How many rows to pack windows into. At 0 (auto), every possible count is tried and the one giving the biggest thumbnails wins." }
+    ]
+  },
+  grid: {
+    name: "Equal grid",
+    desc: "Equal cells, each window shrunk to fit its own cell. Each window goes in the cell nearest to where it really is: of all ways to assign windows to cells, the one with the smallest total distance (computed exactly with the Hungarian method, no search). It resembles Cinnamon's own grid, but unlike Cinnamon's it never depends on which window is on top or was used last. Size fidelity, centering and gap filling don't apply.",
+    params: []
+  }
+};
+
+const SCORING_UI = [
+  { k: "wScale", label: "Thumbnail size", min: 0, max: 5, step: 0.1,
+    info: "How much bigger thumbnails count. Since thumbnails share one scale, this is the same as rewarding an arrangement that fills the screen well. Its balance against the other weights decides how much shrinking you accept in exchange for windows staying in place." },
+  { k: "wSizes", label: "Keep sizes", min: 0, max: 5, step: 0.1,
+    info: "How much it counts against a layout when thumbnails are scaled unevenly, so their sizes no longer match the real windows' relative sizes (as set by size fidelity). The equal grid and gap filling are charged most. Layouts that use one scale for everything (push-apart, ordered rows, the optimizer) are charged only when some thumbnails reach the largest allowed scale and stop growing while others don't, which happens with few windows, mostly small ones. Without this, a layout could look good on thumbnail size just by enlarging small windows more than big ones. Not offered in the Cinnamon extension, where it rarely changes anything; there it stays at its default." },
+  { k: "wDisp", label: "Stay in place", min: 0, max: 5, step: 0.1,
+    info: "How much it counts against a layout when thumbnails land far from where the real windows are on screen. This is absolute position: the average distance from each window's real center to its thumbnail's center." },
+  { k: "wRel", label: "Keep relations", min: 0, max: 5, step: 0.1,
+    info: "How much it counts against a layout when windows change how they sit relative to each other, regardless of where on screen the arrangement ends up or how much it is scaled. Set the other weights low and this high to keep the shape of your desktop while letting it move. The method below chooses how this is measured." },
+  { k: "relMode", label: "Method", type: "select",
+    options: [["order", "Order (left/right, above/below)"], ["direction", "Direction (angles)"]],
+    info: "Order only checks whether one window stays left of, right of, above or below another; windows can shift freely as long as they don't swap sides. Each relation counts by how clearly it holds: two windows far apart at almost the same height are side by side, so their above/below order barely counts, and pairs that were only barely separated count less. Direction compares the exact angle from each window to every other window before and after, so a window up and to the right at 45° should stay at roughly 45°. Direction is stricter and keeps the overall shape more faithfully." },
+  { k: "relNear", label: "Neighbor focus", min: 0, max: 1, step: 0.05, showIf: s => s.relMode === "direction",
+    info: "Direction method only. At 0, every pair of windows counts equally. Higher values make nearby windows matter more than windows far apart, so local neighborhoods stay intact while relations across the screen may bend." }
+];
+
+const COMMON_UI = [
+  { k: "margin", label: "Margin", min: 0, max: 200, step: 4, unit: " px",
+    info: "Empty border kept around the edge of the screen in the spread. Thumbnails are laid out inside what remains." },
+  { k: "spacing", label: "Gap", min: 0, max: 80, step: 2, unit: " px",
+    info: "Minimum empty space between thumbnails, in screen pixels. All layouts keep at least this gap, and none adds extra space around the outer edge beyond the margin." },
+  { k: "fidelity", label: "Size fidelity", min: 0, max: 1, step: 0.05, uniformOnly: true,
+    info: "How strictly thumbnails keep their real sizes relative to each other. At 1, a window twice as wide as another stays twice as wide. At 0, every thumbnail gets the same area, so small windows are easier to read but the size cue is gone. At 0.5, area differences are reduced to their square root: a window with 4× the area appears with 2× the area." },
+  { k: "maxScale", label: "Max scale", min: 0.2, max: 1.5, step: 0.05,
+    info: "Upper limit on any thumbnail's scale. At 1, a thumbnail is never shown bigger than the real window. Above 1, windows on an uncrowded desktop may be enlarged. A window that hits the limit shrinks within its slot, which slightly breaks size fidelity." },
+  { k: "growLimit", label: "Max growth", min: 1, max: 3, step: 0.1, uniformOnly: true, showIf: s => s.fill,
+    info: "The most a single thumbnail may grow while filling gaps, as a multiple of its size from the layout. It is also limited by the max scale." },
+  { k: "duration", label: "Animation", min: 0, max: 1200, step: 50, unit: " ms",
+    info: "How long thumbnails take to fly into place. Set it to 0 to see layout changes instantly while dragging sliders. This is a lab setting only; it doesn't affect the layout." },
+  { k: "centered", label: "Always center", type: "check", uniformOnly: true,
+    info: "When on, the finished arrangement is always placed in the middle of the screen. When off (recommended), it is moved as a whole toward where the real windows are, as far as the screen allows. Centering has a side effect in the optimizer: moving a window at the edge of the arrangement shifts every other window when it re-centers, so a window can get stuck far from home just to hold the others in place." },
+  { k: "fill", label: "Fill gaps", type: "check", uniformOnly: true,
+    info: "After the layout is done, each thumbnail grows (smallest first) as far as it can without touching another thumbnail or the screen margin. This uses empty space better but makes relative sizes less faithful." }
+];
+
+/* --------------------------------------------------------------------------
+   L3. HELP TEXTS (for the (i) buttons; "stat:" entries explain measurements)
+   -------------------------------------------------------------------------- */
+const INFO = {
+  about: "A simulated 1920×1080 desktop for trying out layouts for a “show all windows” spread. Drag a title bar to move a window, drag an edge or corner to resize, double-click a title bar to maximize, use – to minimize and × to close. Open the spread with the button, the E key or the top-left hot corner.\n\nNo layout ever reads which window is on top or was used last: only positions and sizes.\n\nThe layout engine is not part of this page: it is loaded from extension/window-spread@soren-kragh/spreadLayout.js, the same file the Cinnamon extension uses.",
+  windows: "Add windows with random sizes and positions, load a ready-made scenario, or remove them all. Drag a title bar to move a window, drag an edge or corner to resize it, double-click a title bar to maximize, use – to minimize and × to close. Minimized windows disappear from the desktop but appear normally in the spread, as in Cinnamon; clicking one there restores it. The layout never knows which windows are minimized.\n\n“Test: shuffle stacking” is a check, not a feature. It randomly changes which window is drawn on top. No layout here reads the stacking order or focus history, so the spread should not move at all when you press it, even while it is open. If anything moves, that's a bug. With the layout cache on, the measurements also show that the previous layout was simply reused.",
+  display: "Outlines draw a dashed rectangle where each real window is, while the spread is open. Movement lines connect each real window's center (the dot) to its thumbnail. Hot corner toggles the spread when the pointer enters the top-left corner of the desktop.",
+  cache: "Remembers the last layout and reuses it when nothing relevant has changed: the same windows with the same positions and sizes, the same algorithm and settings. Changes in which window is on top or focused, and minimizing or restoring windows, don't count as changes, so they reuse the cached layout. This is how the Cinnamon extension would avoid recomputing (there with one cached layout per monitor and workspace). The measurements show whether the layout was reused (Cache: hit) and how long that took. Turn it off to always compute fresh, for example to time the algorithms.",
+  "stat:Cache": "Whether this layout was reused from the cache (nothing relevant changed since last time) or computed. A reused layout is identical to what computing would give.",
+  compare: "When this is on, opening the spread shows all four algorithms side by side instead of just the selected one. Each panel uses that algorithm's own current settings plus the common settings, and lists its key measurements underneath.\n\nThe settings panel shows the settings of the selected algorithm (outlined). To adjust another one, pick it in the Algorithm menu; all panels update live. Click a panel to open that algorithm full size.",
+  scoring: "Defines what a good layout is, as one score (lower is better). It is shared by all algorithms: the optimizer searches for the lowest score, the polish step uses it to decide which small moves help, and every layout shows its score so you can compare them fairly.\n\nThe score adds up four parts, each scaled by its weight: thumbnail size (smaller thumbnails cost more), size distortion (thumbnails scaled unevenly), movement (distance from the real position), and relations (windows changing sides or angles relative to each other). Only the balance between the weights matters.",
+  common: "Settings shared by all algorithms. Some don't apply to the equal grid and are hidden while it is selected.",
+  tuner: "Searches for the optimizer settings that give the best average score: parallel starts, first checkpoint, temperature, dropping weak starts and the starting point. It runs until you stop it, and the best settings found so far appear in the sliders as soon as they're found.\n\nEvery candidate is run on the same desktops with the same six seeds, so candidates differ only in their settings, not in luck. Most candidates are small nudges to one or two settings of the current best; a quarter are completely random, to explore elsewhere. A candidate that is clearly behind the best partway through is stopped early.\n\nEffort, polish, the scoring weights and the common settings are fixed at the values they had when tuning started; more effort always wins, and the weights define what “best” means.\n\nThe test desktops (under “Test on”) can be changed while tuning, for example with “New random set”. The best settings so far carry over, are first re-scored on the new desktops, and the search continues from there. The status then shows how the settings score on the new desktops and which settings change afterwards, which tells you how sensitive the result is to the choice of desktops. Tuning on this desktop only can find settings that suit it but not others; random desktops help the result carry over. Uses one background thread per CPU core, minus one.",
+  "stat:Score": "The overall score for this layout under the current Scoring weights; lower is better. Compare it between algorithms or settings on the same desktop. It isn't comparable after changing the weights.",
+  "stat:Score parts": "The score split into its parts: the size part (grows as thumbnails get smaller), the size distortion part (thumbnails scaled unevenly), the movement part (distance from real positions) and the relations part (windows changing sides or angles relative to each other). Each is already multiplied by its weight, so they add up to the score.",
+  "stat:Average scale": "Mean thumbnail size relative to the real window. 0.5 means thumbnails are on average half as wide as the real windows. Bigger is easier to recognize.",
+  "stat:Area covered": "Total area of all thumbnails as a share of the screen area inside the margin. Higher means the screen is used better and thumbnails are less miniaturized. 100% is impossible with gaps between windows.",
+  "stat:Size ratio spread": "Largest thumbnail scale divided by the smallest. 1.00 means every window was shrunk by the same factor, so relative sizes are exactly kept. Higher means sizes were distorted.",
+  "stat:Mean movement": "Average distance from each real window's center to its thumbnail's center, as a percentage of the screen diagonal. Low means thumbnails appear close to where the windows really are.",
+  "stat:Relations kept": "For every pair of windows, checks whether the thumbnails are still in the same left/right and above/below order as the real windows. Each relation counts by how strongly the pair is oriented that way: two windows at nearly the same height far apart count almost only for left/right. 100% means no pair swapped sides.",
+  "stat:Direction change": "Average change, in degrees, of the angle from one window's center to another's, over all pairs. 0° means the shape of the arrangement is perfectly kept, only scaled and moved. This is stricter than Relations kept.",
+  "stat:Overlapping pairs": "Number of thumbnail pairs that overlap. It should be 0; anything else means an algorithm stopped before finishing, so raise its effort.",
+  "stat:Compute time": "How long the layout took in this browser. To feel instant on a real desktop it should stay well under about 30 ms.",
+  "stat:Iterations used": "How many push-apart passes were needed until nothing overlapped.",
+  "stat:Winning start": "Which of the parallel starts produced the final layout.",
+  "stat:Starts per round": "How many starts were still running in each round of the race. After each round, the worse half is dropped.",
+  "stat:Moves accepted": "Share of random moves the optimizer kept. Very high suggests the temperature is too high to settle; very low means it is barely exploring.",
+  "stat:Polish": "How many small improving moves the final polish made, and how much it lowered the score.",
+  "stat:Result": "Whether the final layout came from the search, or whether one of the layouts it started from (push-apart or ordered rows, with those algorithms' current settings) scored better after the same final steps and was kept instead. This guarantees the optimizer never scores worse than those algorithms."
+};
+
+/* --------------------------------------------------------------------------
+   L4. SETTINGS PANEL
+   -------------------------------------------------------------------------- */
+function fmt(p, v) {
+  if (p.type === "check") return "";
+  if (p.kfmt && v >= 1000) return (v / 1000) + "k";
+  if (p.zero && Number(v) === 0) return p.zero;
+  const decimals = p.step < 1 ? (p.step < 0.01 ? 3 : 2) : 0;
+  return Number(v).toFixed(decimals) + (p.unit || "");
+}
+function infoButton(text, label) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "info";
+  b.setAttribute("aria-label", "About " + label); b.setAttribute("aria-expanded", "false");
+  b._info = text;
+  return b;
+}
+// Build controls for `list` into `container`, reading and writing `store`.
+// opts.hideUniformOnly: hide settings that only apply to uniform-scale layouts.
+// opts.onInput(p): while a slider moves. opts.onCommit(p): checkbox/select changed or slider released.
+function buildParams(container, list, store, opts = {}) {
+  container.innerHTML = "";
+  const checks = document.createElement("div"); checks.className = "checks";
+  for (const p of list) {
+    if (opts.hideUniformOnly && p.uniformOnly) continue;
+    if (p.showIf && !p.showIf(store)) continue;
+    if (p.type === "check") {
+      const ck = document.createElement("span"); ck.className = "ck";
+      ck.innerHTML = `<label class="chk"><input type="checkbox"> <span></span></label>`;
+      ck.querySelector("span").textContent = p.label;
+      const inp = ck.querySelector("input"); inp.checked = store[p.k];
+      inp.addEventListener("change", () => { store[p.k] = inp.checked; opts.onCommit && opts.onCommit(p); });
+      if (p.info) ck.appendChild(infoButton(p.info, p.label));
+      checks.appendChild(ck);
+      continue;
+    }
+    const row = document.createElement("div"); row.className = "prow";
+    const nm = document.createElement("span"); nm.className = "nm";
+    const label = document.createElement("span"); label.textContent = p.label; nm.appendChild(label);
+    if (p.info) nm.appendChild(infoButton(p.info, p.label));
+    row.appendChild(nm);
+    if (p.type === "select") {
+      const sel = document.createElement("select"); sel.setAttribute("aria-label", p.label);
+      for (const [v, t] of p.options) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
+      sel.value = store[p.k];
+      sel.addEventListener("change", () => { store[p.k] = sel.value; opts.onCommit && opts.onCommit(p); });
+      row.appendChild(sel);
+    } else {
+      const inp = document.createElement("input"); inp.type = "range";
+      inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = store[p.k]; inp.setAttribute("aria-label", p.label);
+      const out = document.createElement("output"); out.textContent = fmt(p, store[p.k]);
+      inp.addEventListener("input", () => { store[p.k] = parseFloat(inp.value); out.textContent = fmt(p, store[p.k]); opts.onInput && opts.onInput(p); });
+      inp.addEventListener("change", () => opts.onCommit && opts.onCommit(p));
+      row.append(inp, out);
+    }
+    container.appendChild(row);
+  }
+  if (checks.children.length) container.appendChild(checks);
+}
+
+const algoSel = document.getElementById("algo");
+for (const [k, a] of Object.entries(ALGO_UI)) { const o = document.createElement("option"); o.value = k; o.textContent = a.name; algoSel.appendChild(o); }
+algoSel.value = algo;
+algoSel.addEventListener("change", () => { algo = algoSel.value; renderAlgoUI(); changed(); });
+function setAlgo(key) { algo = key; algoSel.value = key; renderAlgoUI(); }
+
+const TUNER_BOX = document.getElementById("tuner"); // shown inside the optimizer's settings
+// Settings changes: sliders recompute as they move; checkboxes and selects can show or hide
+// other settings, so they also rebuild the panel.
+const SETTINGS_EVENTS = {
+  onInput: () => changed(),
+  onCommit: p => { if (p.type === "check" || p.type === "select") { renderAlgoUI(); changed(); } }
+};
+function renderAlgoUI() {
+  document.getElementById("algoInfo")._info = `${ALGO_UI[algo].name}: ${ALGO_UI[algo].desc}\n\nEvery algorithm uses only window positions and sizes, never which window is on top or was used last.`;
+  TUNER_BOX.remove();
+  const algoBox = document.getElementById("algoParams");
+  buildParams(algoBox, ALGO_UI[algo].params, algoParams[algo], SETTINGS_EVENTS);
+  if (algo === "anneal") { algoBox.appendChild(TUNER_BOX); TUNER_BOX.hidden = false; }
+  buildParams(document.getElementById("scoreParams"), SCORING_UI, P, SETTINGS_EVENTS);
+  buildParams(document.getElementById("commonParams"), COMMON_UI, P, { ...SETTINGS_EVENTS, hideUniformOnly: algo === "grid" });
+}
+// Restore every setting (all algorithms, scoring, common, tuner test desktops) to its
+// default. Windows, the selected algorithm and the display toggles are kept.
+function resetSettings() {
+  stopTuning();
+  Object.assign(P, SpreadLayout.DEFAULTS.common, SpreadLayout.DEFAULTS.scoring, LAB_DEFAULTS);
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) P.duration = 0;
+  for (const k of SpreadLayout.ALGORITHMS) Object.assign(algoParams[k], SpreadLayout.DEFAULTS[k]);
+  Object.assign(tuneOpts, TUNE_OPTS_DEFAULTS);
+  renderTuneOpts();
+  renderAlgoUI(); changed();
+}
+document.getElementById("reset").addEventListener("click", resetSettings);
+
+/* --------------------------------------------------------------------------
+   L5. RUNNING LAYOUTS AND MEASUREMENTS
+   -------------------------------------------------------------------------- */
+// The engine settings for one algorithm: its own settings plus common and scoring. The
+// optimizer also gets the push-apart and ordered-rows settings for the layouts it starts
+// from, so it is guaranteed to do at least as well as those algorithms as configured here.
+function settingsFor(key) {
+  const extra = key !== "anneal" ? {} : {
+    pushStart: { iterations: algoParams.natural.iterations, step: algoParams.natural.step, aspect: algoParams.natural.aspect, polish: algoParams.natural.polish },
+    rowsStart: { rows: algoParams.rows.rows }
+  };
+  return SpreadLayout.settings(key, { ...P, ...algoParams[key], ...extra });
+}
+// Optional layout cache, as the Cinnamon extension would use it: one slot per algorithm here
+// (in Cinnamon: one per monitor and workspace). The engine only ever receives frames, never
+// stacking order or minimized state, so neither can affect the layout or the cache.
+const layoutCache = SpreadLayout.createCache();
+const useCacheChk = document.getElementById("useCache");
+function runLayout(key) {
+  const t0 = performance.now();
+  const r = useCacheChk.checked
+    ? layoutCache.compute(wins, SCREEN, key, settingsFor(key), "lab/" + key)
+    : SpreadLayout.compute(wins, SCREEN, key, settingsFor(key));
+  return { key, T: r.targets, score: r.score, info: r.info, cached: r.cached, ms: performance.now() - t0 };
+}
+
+let pendingRecompute = null;
+// Something changed: update the animation length, and recompute the open spread (debounced).
+function changed() {
+  document.documentElement.style.setProperty("--dur", P.duration + "ms");
+  if (!exploded) return;
+  clearTimeout(pendingRecompute); pendingRecompute = setTimeout(recompute, 30);
+}
+function recompute() {
+  if (!exploded) return;
+  if (comparing) { targets = null; wins.forEach(placeEl); drawOverlay(); renderCompare(); return; }
+  if (!wins.length) { targets = new Map(); drawOverlay(); showStats(null); return; }
+  const res = runLayout(algo);
+  targets = new Map(res.T.map(t => [t.id, t]));
+  wins.forEach(placeEl);
+  drawOverlay();
+  showStats(res);
+}
+
+// Engine diagnostics as display rows.
+function describeInfo(key, info) {
+  const rows = [];
+  if (key === "natural" && info.iterations !== undefined)
+    rows.push(["Iterations used", info.hitLimit ? `${info.iterations} (hit limit)` : `${info.iterations}`]);
+  if (key === "anneal" && info.starts !== undefined) {
+    const a = algoParams.anneal;
+    if (info.starts > 1) {
+      rows.push(["Winning start", `${info.winningStart} of ${info.starts}` + (a.startFrom === "mixed" ? `, from ${START_NAMES[info.winningKind]}` : "")]);
+      if (a.bailout) rows.push(["Starts per round", info.startsPerRound.join(" → ")]);
+    }
+    rows.push(["Moves accepted", `${(100 * info.acceptRate).toFixed(1)}%`]);
+  }
+  if (info.polishMoves !== undefined) rows.push(["Polish", `${info.polishMoves} moves, score −${info.polishGain.toFixed(4)}`]);
+  if (key === "anneal" && info.keptStart !== undefined)
+    rows.push(["Result", info.keptStart ? `kept the ${START_NAMES[info.keptStart]} starting layout, the search found nothing better` : "found by the search"]);
+  return rows;
+}
+// Measurements of a layout result (lab-side analysis; not part of the engine).
+function computeStats(res) {
+  const T = res.T, byId = new Map(wins.map(w => [w.id, w]));
+  const sc = T.map(t => t.w / byId.get(t.id).w);
+  const avg = sc.reduce((a, b) => a + b, 0) / sc.length;
+  const spread = Math.max(...sc) / Math.min(...sc);
+  const workAreaSize = (SCREEN.w - 2 * P.margin) * (SCREEN.h - 2 * P.margin);
+  let disp = 0;
+  for (const t of T) { const w = byId.get(t.id); disp += Math.hypot(t.x + t.w / 2 - w.x - w.w / 2, t.y + t.h / 2 - w.y - w.h / 2); }
+  let kept = 0, total = 0, overlaps = 0, angSum = 0, angN = 0;
+  for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) {
+    const a = byId.get(T[i].id), b = byId.get(T[j].id), ta = T[i], tb = T[j];
+    const odx = (b.x + b.w / 2) - (a.x + a.w / 2), ody = (b.y + b.h / 2) - (a.y + a.h / 2);
+    const ndx = (tb.x + tb.w / 2) - (ta.x + ta.w / 2), ndy = (tb.y + tb.h / 2) - (ta.y + ta.h / 2);
+    // weighted like the score: a pair's left/right order counts by how horizontal the pair is
+    // (cos²), its above/below order by how vertical it is (sin²)
+    const d2 = odx * odx + ody * ody, hx = d2 > 0 ? odx * odx / d2 : 0, hy = d2 > 0 ? ody * ody / d2 : 0;
+    if (Math.abs(odx) > 20) { total += hx; if (Math.sign(odx) === Math.sign(ndx)) kept += hx; }
+    if (Math.abs(ody) > 20) { total += hy; if (Math.sign(ody) === Math.sign(ndy)) kept += hy; }
+    if (Math.hypot(odx, ody) > 1 && Math.hypot(ndx, ndy) > 1e-6) {
+      let da = Math.abs(Math.atan2(ndy, ndx) - Math.atan2(ody, odx));
+      if (da > Math.PI) da = 2 * Math.PI - da;
+      angSum += da * 180 / Math.PI; angN++;
+    }
+    if (ta.x < tb.x + tb.w - 0.5 && tb.x < ta.x + ta.w - 0.5 && ta.y < tb.y + tb.h - 0.5 && tb.y < ta.y + ta.h - 0.5) overlaps++;
+  }
+  return [
+    ["Average scale", avg.toFixed(3)],
+    ["Area covered", `${(100 * T.reduce((q, t) => q + t.w * t.h, 0) / workAreaSize).toFixed(0)}%`],
+    ["Size ratio spread", spread.toFixed(2)],
+    ["Mean movement", `${(100 * disp / T.length / SCREEN_DIAG).toFixed(1)}%`],
+    ["Relations kept", total ? `${(100 * kept / total).toFixed(0)}%` : "n/a"],
+    ["Direction change", angN ? `${(angSum / angN).toFixed(1)}°` : "n/a"],
+    ["Overlapping pairs", overlaps],
+    ["Compute time", `${res.ms.toFixed(1)} ms`],
+    ...(res.cached === undefined ? [] : [["Cache", res.cached ? "hit, previous layout reused" : "miss, computed"]]),
+    ...describeInfo(res.key, res.info)
+  ];
+}
+// Measurement strip under the desktop, for the selected algorithm.
+function showStats(res) {
+  const bar = document.getElementById("statsbar");
+  bar.innerHTML = "";
+  if (!res) {
+    const msg = document.createElement("span");
+    msg.textContent = exploded ? "Add a window to see measurements." : "Open the spread to see the score and measurements.";
+    bar.appendChild(msg); return;
+  }
+  const item = (label, value, key, cls) => {
+    const it = document.createElement("span"); it.className = "it" + (cls ? " " + cls : "");
+    const b = document.createElement("b"); b.textContent = value;
+    it.append(label + " ", b);
+    if (INFO["stat:" + key]) it.appendChild(infoButton(INFO["stat:" + key], key));
+    bar.appendChild(it);
+  };
+  const sc = res.score;
+  item("Score", sc.total.toFixed(3), "Score", "score");
+  item("from size", sc.size.toFixed(3), "Score parts");
+  item("size distortion", sc.sizes.toFixed(3), "Score parts");
+  item("movement", sc.move.toFixed(3), "Score parts");
+  item("relations", sc.rel.toFixed(3), "Score parts");
+  if (sc.overlap > 1e-4) item("overlap", sc.overlap.toFixed(3), "Score parts");
+  for (const [k, v] of computeStats(res)) item(k, String(v), k);
+}
+
+/* --------------------------------------------------------------------------
+   L6. DRAWING: DESKTOP OVERLAY AND COMPARISON VIEW
+   -------------------------------------------------------------------------- */
+// SVG helper. CSS variables only work through style, not presentation attributes.
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, style) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (style) e.setAttribute("style", style);
+  return e;
+}
+// Dashed outlines of the real windows and lines from each real window to its thumbnail.
+function drawGuides(svg, T) {
+  const showOutlines = document.getElementById("ghosts").checked, showLines = document.getElementById("trails").checked;
+  const byId = new Map(T.map(t => [t.id, t]));
+  for (const w of wins) {
+    const t = byId.get(w.id); if (!t) continue;
+    if (showOutlines) svg.appendChild(svgEl("rect", { x: w.x, y: w.y, width: w.w, height: w.h, rx: 9 },
+      "fill:none;stroke:var(--ghost);stroke-width:2;stroke-dasharray:10 8"));
+    if (showLines) {
+      const x1 = w.x + w.w / 2, y1 = w.y + w.h / 2;
+      svg.appendChild(svgEl("line", { x1, y1, x2: t.x + t.w / 2, y2: t.y + t.h / 2 }, "stroke:var(--trail);stroke-width:3"));
+      svg.appendChild(svgEl("circle", { cx: x1, cy: y1, r: 7 }, "fill:var(--trail)"));
+    }
+  }
+}
+function drawOverlay() {
+  overlay.innerHTML = "";
+  if (!exploded || !targets) return;
+  drawGuides(overlay, [...targets.values()]);
+}
+
+const compareEl = document.getElementById("compare");
+const COMPARE_STATS = [ // measurement name -> short label in the comparison panels
+  ["Average scale", "Scale"], ["Area covered", "Covered"], ["Size ratio spread", "Size spread"], ["Mean movement", "Moved"],
+  ["Relations kept", "Relations"], ["Direction change", "Direction"], ["Overlapping pairs", "Overlaps"], ["Compute time", "Time"]
+];
+function renderCompare() {
+  compareEl.innerHTML = "";
+  const keys = Object.keys(ALGO_UI), results = {};
+  if (wins.length) for (const key of keys) results[key] = runLayout(key);
+  const scores = Object.values(results).map(r => r.score.total);
+  const bestScore = scores.length ? Math.min(...scores) : null;
+  keys.forEach((key, n) => {
+    const cell = document.createElement("div");
+    cell.className = "cmp" + (key === algo ? " sel" : "");
+    cell.tabIndex = 0; cell.setAttribute("role", "button");
+    cell.setAttribute("aria-label", `${ALGO_UI[key].name}. Open full size and edit its settings.`);
+    const head = document.createElement("div"); head.className = "cmp-head";
+    const name = document.createElement("span"); name.className = "cmp-name"; name.textContent = ALGO_UI[key].name;
+    head.appendChild(name);
+    if (key === algo) { const s = document.createElement("span"); s.className = "cmp-tag"; s.textContent = "Settings shown in panel"; head.appendChild(s); }
+    if (results[key]) {
+      const total = results[key].score.total, best = total <= bestScore + 1e-9;
+      const badge = document.createElement("span"); badge.className = "score" + (best ? "" : " plain");
+      const b = document.createElement("b"); b.textContent = total.toFixed(3);
+      badge.append(best ? "Best score " : "Score ", b);
+      head.appendChild(badge);
+    }
+    const svg = svgEl("svg", { viewBox: `0 0 ${SCREEN.w} ${SCREEN.h}`, preserveAspectRatio: "xMidYMid meet" });
+    svg.appendChild(svgEl("rect", { x: 0, y: 0, width: SCREEN.w, height: SCREEN.h, rx: 12 }, "fill:var(--desk2)"));
+    const foot = document.createElement("div"); foot.className = "cmp-stats";
+    cell.append(head, svg, foot);
+    compareEl.appendChild(cell);
+    const open = () => { setAlgo(key); comparing = false; updateView(); recompute(); };
+    cell.addEventListener("click", open);
+    cell.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    if (!wins.length) { foot.textContent = "Add a window to compare."; return; }
+    const res = results[key], byId = new Map(wins.map(w => [w.id, w]));
+    for (const t of res.T) { // miniature thumbnail: frame, title bar, icon, title, a few lines
+      const w = byId.get(t.id), s = t.w / w.w, clipId = `c${n}_${t.id}`;
+      const clip = svgEl("clipPath", { id: clipId }); clip.appendChild(svgEl("rect", { x: t.x, y: t.y, width: t.w, height: t.h, rx: 9 * s }));
+      svg.appendChild(clip);
+      const g = svgEl("g", { "clip-path": `url(#${clipId})` });
+      g.appendChild(svgEl("rect", { x: t.x, y: t.y, width: t.w, height: t.h }, "fill:var(--win)"));
+      g.appendChild(svgEl("rect", { x: t.x, y: t.y, width: t.w, height: 44 * s }, "fill:var(--win-soft)"));
+      g.appendChild(svgEl("rect", { x: t.x + 16 * s, y: t.y + 14 * s, width: 16 * s, height: 16 * s, rx: 4 * s }, `fill:${w.color}`));
+      const label = svgEl("text", { x: t.x + 44 * s, y: t.y + 29 * s, "font-size": 20 * s }, "fill:var(--win-ink);font-weight:600");
+      label.textContent = w.title; g.appendChild(label);
+      for (let k = 0; k < 5; k++) g.appendChild(svgEl("rect",
+        { x: t.x + 20 * s, y: t.y + (68 + k * 26) * s, width: w.w * w.lines[k] / 100 * 0.85 * s, height: 12 * s, rx: 6 * s }, "fill:var(--win-soft)"));
+      svg.appendChild(g);
+      svg.appendChild(svgEl("rect", { x: t.x, y: t.y, width: t.w, height: t.h, rx: 9 * s }, "fill:none;stroke:var(--win-line);stroke-width:2"));
+    }
+    drawGuides(svg, res.T);
+    const stats = new Map(computeStats(res));
+    for (const [k, short] of COMPARE_STATS) {
+      const item = document.createElement("span"), b = document.createElement("b");
+      b.textContent = String(stats.get(k));
+      item.append(short + " ", b);
+      foot.appendChild(item);
+    }
+  });
+  showStats(results[algo] || null);
+}
+
+/* --------------------------------------------------------------------------
+   L7. SIMULATED WINDOWS AND SCENARIOS
+   -------------------------------------------------------------------------- */
+function makeWin(x, y, w, h, app) {
+  const [title, color] = APPS[app % APPS.length];
+  const lines = Array.from({ length: 14 }, () => 30 + Math.random() * 65); // fake content line widths (%)
+  const win = { id: nextId++, x, y, w, h, z: ++zTop, title, color, lines };
+  wins.push(win); buildEl(win);
+  return win;
+}
+function buildEl(win) {
+  const el = document.createElement("div");
+  el.className = "win";
+  el.innerHTML = `<div class="bar"><span class="dot" style="background:${win.color}"></span><span class="title">${win.title}</span><span class="dims"></span><button class="wbtn min" title="Minimize" aria-label="Minimize window">–</button><button class="wbtn close" title="Close" aria-label="Close window">×</button></div>
+    <div class="body">${win.lines.map((p, i) => `<div class="ln" style="width:${p}%;${i === 0 ? `background:${win.color};opacity:.35` : ""}"></div>`).join("")}</div>
+    ${["n", "s", "e", "w", "ne", "nw", "se", "sw"].map(d => `<div class="h ${d}" data-dir="${d}"></div>`).join("")}`;
+  el.querySelectorAll(".wbtn").forEach(b => b.addEventListener("pointerdown", e => e.stopPropagation()));
+  el.querySelector(".close").addEventListener("click", e => { e.stopPropagation(); removeWin(win); });
+  el.querySelector(".min").addEventListener("click", e => { e.stopPropagation(); win.minimized = true; placeEl(win); });
+  el.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    raise(win);
+    if (exploded) { win.minimized = false; setExploded(false); return; } // clicking a thumbnail picks (and restores) that window
+    const h = e.target.closest(".h");
+    if (h) startDrag(e, win, "resize", h.dataset.dir);
+    else if (e.target.closest(".bar")) startDrag(e, win, "move");
+  });
+  el.querySelector(".bar").addEventListener("dblclick", () => { // maximize / restore
+    if (exploded) return;
+    if (win.restore) { Object.assign(win, win.restore); win.restore = null; }
+    else { win.restore = { x: win.x, y: win.y, w: win.w, h: win.h }; Object.assign(win, { x: 0, y: 0, w: SCREEN.w, h: SCREEN.h }); }
+    placeEl(win);
+  });
+  stage.appendChild(el); els.set(win.id, el); placeEl(win); updateEmpty();
+}
+// Position a window element: real frame, or scaled into its thumbnail while exploded.
+function placeEl(win) {
+  const el = els.get(win.id); if (!el) return;
+  Object.assign(el.style, { left: win.x + "px", top: win.y + "px", width: win.w + "px", height: win.h + "px", zIndex: win.z });
+  el.querySelector(".dims").textContent = `${Math.round(win.w)}×${Math.round(win.h)}`;
+  el.classList.toggle("minimized", !!win.minimized && !exploded); // hidden on the desktop, shown normally in the spread
+  const t = exploded && targets && targets.get(win.id);
+  el.style.transform = t ? `translate(${t.x - win.x}px, ${t.y - win.y}px) scale(${t.w / win.w})` : "none";
+}
+function raise(win) { win.z = ++zTop; els.get(win.id).style.zIndex = win.z; } // drawing order only
+function removeWin(win) {
+  wins = wins.filter(w => w !== win); els.get(win.id).remove(); els.delete(win.id);
+  updateEmpty(); if (exploded) recompute();
+}
+function updateEmpty() { document.getElementById("empty").style.display = wins.length ? "none" : "flex"; }
+function randomWin(small) {
+  const w = small ? 260 + Math.random() * 300 : 380 + Math.random() * 900;
+  const h = small ? 180 + Math.random() * 220 : 260 + Math.random() * 560;
+  return makeWin(Math.random() * (SCREEN.w - w), Math.random() * (SCREEN.h - h), Math.round(w), Math.round(h), Math.floor(Math.random() * APPS.length));
+}
+function startDrag(e, win, mode, dir) {
+  e.preventDefault();
+  const sx = e.clientX, sy = e.clientY, o = { x: win.x, y: win.y, w: win.w, h: win.h }, el = els.get(win.id);
+  el.classList.add("dragging"); win.restore = null;
+  const move = ev => {
+    const dx = (ev.clientX - sx) / stageScale, dy = (ev.clientY - sy) / stageScale;
+    if (mode === "move") { win.x = clamp(o.x + dx, -o.w + 100, SCREEN.w - 100); win.y = clamp(o.y + dy, 0, SCREEN.h - 44); }
+    else {
+      let { x, y, w, h } = o;
+      if (dir.includes("e")) w = Math.max(MIN_WIN_W, o.w + dx);
+      if (dir.includes("s")) h = Math.max(MIN_WIN_H, o.h + dy);
+      if (dir.includes("w")) { w = Math.max(MIN_WIN_W, o.w - dx); x = o.x + o.w - w; }
+      if (dir.includes("n")) { h = Math.max(MIN_WIN_H, o.h - dy); y = o.y + o.h - h; }
+      Object.assign(win, { x, y, w, h });
+    }
+    placeEl(win);
+  };
+  const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); el.classList.remove("dragging"); };
+  addEventListener("pointermove", move); addEventListener("pointerup", up);
+}
+
+function clearAll() { for (const el of els.values()) el.remove(); els.clear(); wins = []; updateEmpty(); }
+const SCENARIOS = { // [x, y, w, h, app index]
+  workday: () => [[80, 60, 1100, 800, 0], [700, 120, 900, 700, 3], [1450, 80, 420, 640, 4], [200, 520, 640, 460, 2], [1150, 580, 700, 420, 1], [1600, 650, 260, 360, 6]]
+    .forEach(a => makeWin(...a)),
+  stacked: () => [[0, 0, 1920, 1080, 0], [40, 30, 1820, 1010, 3], [90, 60, 1700, 960, 5], [140, 90, 1600, 900, 10]].forEach(a => makeWin(...a)),
+  cascade: () => { for (let i = 0; i < 8; i++) makeWin(120 + i * 60, 60 + i * 50, 900, 600, i); },
+  small: () => { for (let i = 0; i < 12; i++) randomWin(true); },
+  mixed: () => { for (let i = 0; i < 8; i++) randomWin(false); }
+};
+document.getElementById("add").addEventListener("click", () => { randomWin(false); if (exploded) recompute(); });
+document.getElementById("add5").addEventListener("click", () => { for (let i = 0; i < 5; i++) randomWin(Math.random() < 0.5); if (exploded) recompute(); });
+document.getElementById("clear").addEventListener("click", () => { clearAll(); if (exploded) recompute(); });
+document.getElementById("shuffleZ").addEventListener("click", () => { // must never change any layout
+  wins.slice().sort(() => Math.random() - 0.5).forEach(raise);
+  if (exploded) recompute();
+});
+const scenarioSel = document.getElementById("scenario");
+scenarioSel.addEventListener("change", () => {
+  if (!scenarioSel.value) return;
+  clearAll(); SCENARIOS[scenarioSel.value](); scenarioSel.value = ""; if (exploded) recompute();
+});
+
+/* --------------------------------------------------------------------------
+   L8. OPTIMIZER SETTINGS TUNER
+   Tries optimizer settings on a fixed set of desktops and seeds, keeps the best
+   average score and shows it live in the sliders. Each candidate is evaluated in
+   a Web Worker running the engine, rebuilt from its factory function.
+   -------------------------------------------------------------------------- */
+// Evaluates one candidate (runs inside a worker, or time-sliced on the page as a fallback).
+// Runs go seed by seed across all desktops; after each full sweep the running total is
+// compared with the best settings' total over the same runs, and a clearly worse
+// candidate is stopped early. Yields after every run.
+function* evaluateCandidate(msg) {
+  const { id, settings, desktops, seeds, bestRuns, screen } = msg;
+  const runs = [];
+  let sum = 0, bestSum = 0;
+  for (let si = 0; si < seeds.length; si++) {
+    for (const ws of desktops) {
+      const v = SpreadLayout.compute(ws, screen, "anneal", { ...settings, seed: seeds[si] }).score.total;
+      if (bestRuns) bestSum += bestRuns[runs.length];
+      runs.push(v); sum += v;
+      yield;
+    }
+    if (bestRuns && si >= 1 && si < seeds.length - 1) {
+      const margin = 0.04 / Math.sqrt(si + 1);
+      if (sum > bestSum + margin * Math.abs(bestSum) + 1e-9) return { id, aborted: true };
+    }
+  }
+  return { id, runs, mean: sum / runs.length };
+}
+
+// Settings the tuner explores, with their ranges.
+const TUNE = [
+  { k: "restarts", min: 1, max: 16, step: 1 },
+  { k: "checkpoint", min: 0.05, max: 0.95, step: 0.05 },
+  { k: "temp", min: 0.005, max: 0.5, step: 0.005, log: true },
+  { k: "bailout", bool: true },
+  { k: "startFrom", options: ["push", "rows", "grid", "none", "mixed"] }
+];
+const TUNE_SEEDS = [1, 2, 3, 4, 5, 6];
+const tuner = {
+  running: false, workers: [], threads: 0,
+  setup: null,           // { desktops, seeds } of the current test set
+  snapshot: null,        // full engine settings at start (everything not being tuned)
+  original: null,        // tuned settings before the session, for "revert"
+  startSettings: null,   // tuned settings this phase started from (changes when the test set changes)
+  best: null,            // { settings, runs, mean }
+  baseline: null,        // mean score of startSettings on the current test set
+  baselineSent: false, tested: 0, stopped: 0, keys: new Set(), nextId: 1, pending: new Map(),
+  generation: 0,         // bumped when the test set changes; older results are ignored
+  switched: null, setLabel: "", revertable: false
+};
+const tuneBtn = document.getElementById("tuneBtn");
+const tuneStatus = document.getElementById("tuneStatus");
+
+function snap(d, v) {
+  if (d.bool) return !!v;
+  if (d.options) return v;
+  v = clamp(v, d.min, d.max);
+  return +(Math.round((v - d.min) / d.step) * d.step + d.min).toFixed(4);
+}
+function tuneKey(c) { return TUNE.map(d => c[d.k]).join("|"); }
+function randomCandidate() {
+  const c = {};
+  for (const d of TUNE) {
+    if (d.bool) c[d.k] = Math.random() < 0.5;
+    else if (d.options) c[d.k] = d.options[Math.floor(Math.random() * d.options.length)];
+    else if (d.log) c[d.k] = snap(d, Math.exp(Math.log(d.min) + Math.random() * (Math.log(d.max) - Math.log(d.min))));
+    else c[d.k] = snap(d, d.min + Math.random() * (d.max - d.min));
+  }
+  return c;
+}
+function nudge(base) { // change one or two settings a little
+  const c = { ...base }, gauss = () => Math.sqrt(-2 * Math.log(Math.max(Math.random(), 1e-12))) * Math.cos(2 * Math.PI * Math.random());
+  const count = Math.random() < 0.6 ? 1 : 2;
+  for (let n = 0; n < count; n++) {
+    const d = TUNE[Math.floor(Math.random() * TUNE.length)];
+    if (d.bool) c[d.k] = !c[d.k];
+    else if (d.options) { const others = d.options.filter(o => o !== c[d.k]); c[d.k] = others[Math.floor(Math.random() * others.length)]; }
+    else if (d.log) c[d.k] = snap(d, Math.exp(Math.log(c[d.k]) + gauss() * 0.35));
+    else c[d.k] = snap(d, c[d.k] + gauss() * 0.12 * (d.max - d.min) + (Math.random() < 0.5 ? -1 : 1) * d.step);
+  }
+  return c;
+}
+function nextCandidate() { // a quarter random, the rest nudges of the best; never repeats
+  const base = tuner.best ? tuner.best.settings : tuner.startSettings;
+  for (let tries = 0; tries < 40; tries++) {
+    const c = Math.random() < 0.25 ? randomCandidate() : nudge(base);
+    const key = tuneKey(c);
+    if (!tuner.keys.has(key)) { tuner.keys.add(key); return c; }
+  }
+  return null; // neighborhood exhausted; idle until something changes
+}
+
+// Which desktops the tuner tests on. Generated desktops are deterministic (desktop i of
+// set s always comes from the same random sequence), so a session compares like with like.
+const TUNE_OPTS = [
+  { k: "count", label: "Random desktops", min: 0, max: 24, step: 1,
+    info: "How many generated desktops to tune on, besides this one. More desktops make the winning settings more likely to work well in general, but every candidate takes proportionally longer to test. Every third generated desktop uses smaller windows, to cover crowded cases." },
+  { k: "minW", label: "Windows, min", min: 1, max: 30, step: 1,
+    info: "The fewest windows a generated desktop may have. Each generated desktop gets a window count between the minimum and maximum (if the minimum is set above the maximum, the two are swapped)." },
+  { k: "maxW", label: "Windows, max", min: 1, max: 30, step: 1,
+    info: "The most windows a generated desktop may have. Large counts make each test slower, roughly with the square of the window count." },
+  { k: "set", label: "Random set", min: 1, max: 999, step: 1,
+    info: "Which set of random desktops to generate. The same set number with the same options always gives exactly the same desktops, so sessions stay comparable; a different number gives a completely fresh set. “New random set” moves to the next number. Tuning on two different sets and getting similar winning settings is good evidence they work in general." },
+  { k: "current", label: "Include this desktop", type: "check",
+    info: "Also tune on the windows currently on the test desktop. Its windows are copied when tuning starts; editing them afterwards doesn't affect a running session." }
+];
+const TUNE_OPTS_DEFAULTS = { count: 24, minW: 4, maxW: 12, set: 4, current: false };
+const tuneOpts = { ...TUNE_OPTS_DEFAULTS };
+function tuneRange() { return [Math.min(tuneOpts.minW, tuneOpts.maxW), Math.max(tuneOpts.minW, tuneOpts.maxW)]; }
+function tuneDescription() {
+  const [lo, hi] = tuneRange(), parts = [];
+  if (tuneOpts.current) parts.push("this desktop");
+  if (tuneOpts.count) parts.push(`${tuneOpts.count} random (set ${tuneOpts.set}) with ${lo === hi ? lo : lo + "–" + hi} windows`);
+  return parts.join(" + ");
+}
+// Looked up inside the tuner panel: it is detached from the page while another algorithm is selected.
+const tuneSummaryEl = TUNER_BOX.querySelector("#tuneSummary"), tuneOptsEl = TUNER_BOX.querySelector("#tuneOpts");
+function updateTuneSummary() { tuneSummaryEl.textContent = "Test on " + (tuneDescription() || "nothing yet"); }
+function renderTuneOpts() {
+  const box = tuneOptsEl;
+  // Changes apply to a running session when committed (slider released, checkbox toggled).
+  buildParams(box, TUNE_OPTS, tuneOpts, { onInput: updateTuneSummary, onCommit: () => { updateTuneSummary(); switchTestSet(); } });
+  const nb = document.createElement("button"); nb.className = "b small"; nb.textContent = "New random set";
+  nb.addEventListener("click", () => { tuneOpts.set = tuneOpts.set % 999 + 1; renderTuneOpts(); switchTestSet(); });
+  box.appendChild(nb);
+  updateTuneSummary();
+}
+function tuneDesktops() {
+  const out = [], [lo, hi] = tuneRange();
+  if (tuneOpts.current && wins.length) out.push(wins.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h })));
+  for (let i = 0; i < tuneOpts.count; i++) {
+    const r = SpreadLayout.random(5000 + i + (tuneOpts.set - 1) * 100003), small = i % 3 === 2, n = lo + Math.floor(r() * (hi - lo + 1));
+    out.push(Array.from({ length: n }, (_, k) => {
+      const w = small ? 260 + r() * 300 : 380 + r() * 900, h = small ? 180 + r() * 220 : 260 + r() * 560;
+      return { id: k + 1, x: r() * (SCREEN.w - w), y: r() * (SCREEN.h - h), w, h };
+    }));
+  }
+  return out;
+}
+
+// Worker code = the engine (rebuilt from its factory function, so there is no second copy)
+// + the candidate evaluator.
+const workerSource = () => [
+  "var SpreadLayout = (" + createSpreadLayout.toString() + ")();",
+  evaluateCandidate.toString(),
+  "onmessage = e => { const g = evaluateCandidate(e.data); let r; do { r = g.next(); } while (!r.done); postMessage(r.value); };"
+].join("\n");
+// Fallback when workers are unavailable: evaluate on the page in short time slices.
+class SlicedRunner {
+  constructor() { this.onmessage = null; this.timer = 0; }
+  postMessage(msg) {
+    const g = evaluateCandidate(msg);
+    const tick = () => {
+      const end = performance.now() + 12;
+      let r;
+      do { r = g.next(); } while (!r.done && performance.now() < end);
+      if (r.done) this.onmessage({ data: r.value }); else this.timer = setTimeout(tick, 0);
+    };
+    this.timer = setTimeout(tick, 0);
+  }
+  terminate() { clearTimeout(this.timer); }
+}
+function makeWorkers() {
+  const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1));
+  try {
+    const url = URL.createObjectURL(new Blob([workerSource()], { type: "text/javascript" }));
+    const list = Array.from({ length: n }, () => new Worker(url));
+    setTimeout(() => URL.revokeObjectURL(url), 30000); // workers load their script asynchronously
+    return { list, threads: n };
+  } catch (e) {
+    return { list: [new SlicedRunner()], threads: 0 };
+  }
+}
+
+function tuneLabel(key) { const p = ALGO_UI.anneal.params.find(q => q.k === key); return p ? p.label : key; }
+function tuneValue(key, v) {
+  const p = ALGO_UI.anneal.params.find(q => q.k === key);
+  if (typeof v === "boolean") return v ? "on" : "off";
+  if (p && p.type === "select") { const o = p.options.find(q => q[0] === v); return o ? o[1] : String(v); }
+  return p ? fmt(p, v) : String(v);
+}
+function spawnWorkers() {
+  const { list, threads } = makeWorkers();
+  tuner.workers = list; tuner.threads = threads;
+  for (const w of list) {
+    w.onmessage = e => onResult(w, e.data);
+    if (typeof Worker !== "undefined" && w instanceof Worker)
+      w.onerror = () => { stopTuning(); tuneStatus.textContent = "The background workers failed to start in this browser."; };
+    dispatch(w);
+  }
+}
+function dispatch(worker) {
+  if (!tuner.running || !tuner.workers.includes(worker)) return;
+  let settings, baseline = false;
+  if (!tuner.baselineSent) { settings = { ...tuner.startSettings }; baseline = true; tuner.baselineSent = true; tuner.keys.add(tuneKey(settings)); }
+  else settings = nextCandidate();
+  if (!settings) { worker.idle = true; return; }
+  const id = tuner.nextId++;
+  tuner.pending.set(id, { settings, baseline, gen: tuner.generation });
+  worker.idle = false;
+  worker.postMessage({ id, settings: { ...tuner.snapshot, ...settings }, desktops: tuner.setup.desktops, seeds: tuner.setup.seeds,
+    screen: SCREEN, bestRuns: tuner.best ? tuner.best.runs : null });
+}
+function onResult(worker, res) {
+  const job = tuner.pending.get(res.id); tuner.pending.delete(res.id);
+  if (!job || !tuner.running || job.gen !== tuner.generation) return; // stale result from an earlier test set
+  tuner.tested++;
+  if (res.aborted) tuner.stopped++;
+  else {
+    if (job.baseline) tuner.baseline = res.mean;
+    if (!tuner.best || res.mean < tuner.best.mean - 1e-12) {
+      tuner.best = { settings: job.settings, runs: res.runs, mean: res.mean };
+      Object.assign(algoParams.anneal, job.settings);
+      if (algo === "anneal") renderAlgoUI();
+      changed();
+    }
+  }
+  updateTuneStatus();
+  dispatch(worker);
+  for (const w of tuner.workers) if (w.idle) dispatch(w);
+}
+function startTuning() {
+  const desktops = tuneDesktops();
+  if (!desktops.length) { tuneStatus.textContent = "Nothing to test on: add windows to this desktop, or set some random desktops under “Test on”."; return; }
+  const current = Object.fromEntries(TUNE.map(d => [d.k, algoParams.anneal[d.k]]));
+  Object.assign(tuner, { running: true, best: null, baseline: null, baselineSent: false, tested: 0, stopped: 0,
+    keys: new Set(), pending: new Map(), revertable: false, generation: 0, switched: null,
+    original: { ...current }, startSettings: { ...current }, setLabel: tuneDescription(),
+    snapshot: settingsFor("anneal"), setup: { desktops, seeds: TUNE_SEEDS } });
+  spawnWorkers();
+  tuneBtn.textContent = "Stop tuning"; tuneBtn.classList.add("on");
+  updateTuneStatus();
+}
+// Change the test desktops while tuning: the best settings so far carry over, are first
+// re-scored on the new desktops, and the search continues from there. Scores on different
+// desktops can't be compared, so comparison restarts from that baseline.
+function switchTestSet() {
+  if (!tuner.running) return;
+  const desktops = tuneDesktops();
+  if (!desktops.length) { stopTuning(); tuneStatus.textContent = "Tuning stopped: there is nothing to test on with these options."; return; }
+  for (const w of tuner.workers) w.terminate();
+  const carried = tuner.best ? { ...tuner.best.settings } : { ...tuner.startSettings };
+  tuner.switched = { from: tuner.setLabel, prevMean: tuner.best ? tuner.best.mean : null };
+  Object.assign(tuner, { generation: tuner.generation + 1, best: null, baseline: null, baselineSent: false,
+    tested: 0, stopped: 0, keys: new Set(), pending: new Map(), startSettings: carried, setLabel: tuneDescription(),
+    setup: { desktops, seeds: tuner.setup.seeds } });
+  spawnWorkers();
+  updateTuneStatus();
+}
+function stopTuning() {
+  if (!tuner.running) return;
+  tuner.running = false;
+  for (const w of tuner.workers) w.terminate();
+  tuner.workers = [];
+  const now = Object.fromEntries(TUNE.map(d => [d.k, algoParams.anneal[d.k]]));
+  tuner.revertable = !!tuner.original && tuneKey(now) !== tuneKey(tuner.original);
+  tuneBtn.textContent = "Start tuning"; tuneBtn.classList.remove("on");
+  updateTuneStatus();
+}
+function updateTuneStatus() {
+  tuneStatus.innerHTML = "";
+  if (!tuner.setup) return;
+  const lines = [];
+  lines.push(`${tuner.running ? "Tuning" : "Tuned"} on ${tuner.setLabel}, ${tuner.setup.seeds.length} seeds each, ${tuner.threads ? tuner.threads + " threads" : "on the page (no workers)"}.`);
+  if (tuner.switched) {
+    const sw = tuner.switched;
+    lines.push(`Switched from ${sw.from}` + (sw.prevMean !== null ? `, where the best scored ${sw.prevMean.toFixed(4)}.` : "."));
+    if (tuner.baseline !== null) lines.push(`On the new desktops those settings score ${tuner.baseline.toFixed(4)}.`);
+    if (tuner.best) {
+      const diff = TUNE.filter(d => tuner.best.settings[d.k] !== tuner.startSettings[d.k])
+        .map(d => `${tuneLabel(d.k)} ${tuneValue(d.k, tuner.startSettings[d.k])} → ${tuneValue(d.k, tuner.best.settings[d.k])}`);
+      lines.push(diff.length ? `Changed since switching: ${diff.join(", ")}.` : "No setting has changed since switching yet.");
+    }
+  }
+  lines.push(`Tested ${tuner.tested} settings${tuner.switched ? " on these desktops" : ""}, ${tuner.stopped} stopped early.`);
+  if (tuner.best) lines.push(`Best average score ${tuner.best.mean.toFixed(4)}` + (tuner.baseline !== null ? `, starting from ${tuner.baseline.toFixed(4)}.` : "."));
+  for (const l of lines) { const d = document.createElement("div"); d.textContent = l; tuneStatus.appendChild(d); }
+  if (!tuner.running && tuner.revertable) {
+    const b = document.createElement("button"); b.className = "b small"; b.textContent = "Revert to settings before tuning";
+    b.addEventListener("click", () => {
+      Object.assign(algoParams.anneal, tuner.original); tuner.revertable = false;
+      if (algo === "anneal") renderAlgoUI();
+      changed(); updateTuneStatus();
+    });
+    tuneStatus.appendChild(b);
+  }
+}
+tuneBtn.addEventListener("click", () => tuner.running ? stopTuning() : startTuning());
+
+/* --------------------------------------------------------------------------
+   L9. PAGE WIRING
+   -------------------------------------------------------------------------- */
+const explodeBtn = document.getElementById("explode");
+const compareChk = document.getElementById("compareAll");
+function updateView() {
+  wrap.classList.toggle("comparing", comparing);
+  stage.classList.toggle("exploded", exploded && !comparing);
+}
+function setExploded(v) {
+  exploded = v; comparing = v && compareChk.checked;
+  explodeBtn.textContent = v ? "Back to desktop" : (compareChk.checked ? "Compare all algorithms" : "Show all windows");
+  updateView();
+  if (v) recompute();
+  else { targets = null; wins.forEach(placeEl); drawOverlay(); showStats(null); }
+}
+explodeBtn.addEventListener("click", () => setExploded(!exploded));
+useCacheChk.addEventListener("change", () => { layoutCache.clear(); changed(); });
+compareChk.addEventListener("change", () => {
+  if (exploded) { comparing = compareChk.checked; updateView(); recompute(); }
+  else explodeBtn.textContent = compareChk.checked ? "Compare all algorithms" : "Show all windows";
+});
+
+// Hot corner (top-left of the simulated desktop).
+const hot = document.getElementById("hot"), hotChk = document.getElementById("hotOn");
+let lastHot = 0;
+hot.addEventListener("pointerenter", () => {
+  if (!hotChk.checked) return;
+  const now = performance.now(); if (now - lastHot < 700) return; lastHot = now;
+  setExploded(!exploded);
+});
+hotChk.addEventListener("change", () => hot.classList.toggle("on", hotChk.checked));
+hot.classList.add("on");
+["ghosts", "trails"].forEach(id => document.getElementById(id).addEventListener("change", () => comparing ? renderCompare() : drawOverlay()));
+
+// Info popups: one shared tooltip, placed next to the (i) button that opened it.
+const tip = document.getElementById("tip");
+let tipFor = null;
+function hideTip() { if (tipFor) tipFor.setAttribute("aria-expanded", "false"); tip.hidden = true; tipFor = null; }
+function showTip(b) {
+  hideTip();
+  const text = b._info || INFO[b.dataset.info] || "";
+  tip.innerHTML = "";
+  for (const para of text.split("\n\n")) { const pEl = document.createElement("p"); pEl.textContent = para; tip.appendChild(pEl); }
+  tip.hidden = false; tipFor = b; b.setAttribute("aria-expanded", "true");
+  const r = b.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+  const left = clamp(r.left + r.width / 2 - tw / 2, 8, innerWidth - tw - 8);
+  const top = r.bottom + 8 + th > innerHeight - 8 ? r.top - th - 8 : r.bottom + 8;
+  tip.style.left = left + "px"; tip.style.top = Math.max(8, top) + "px";
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button.info");
+  if (b) { e.preventDefault(); e.stopPropagation(); if (tipFor === b) hideTip(); else showTip(b); return; }
+  if (!e.target.closest("#tip")) hideTip();
+});
+document.querySelector("aside").addEventListener("scroll", hideTip);
+addEventListener("resize", hideTip);
+
+// Keys: E toggles the spread, Esc closes a popup or the spread.
+addEventListener("keydown", e => {
+  if (e.key === "Escape" && tipFor) { hideTip(); return; }
+  if (e.target.matches("input,select,textarea") && e.key !== "Escape") return;
+  if (e.key === "e" || e.key === "E") setExploded(!exploded);
+  else if (e.key === "Escape" && exploded) setExploded(false);
+});
+
+// Fit the 1920×1080 desktop into the available space.
+function fitStage() {
+  const r = wrap.getBoundingClientRect(), pad = 20;
+  stageScale = Math.max(0.05, Math.min((r.width - 2 * pad) / SCREEN.w, (r.height - 2 * pad) / SCREEN.h));
+  stage.style.transform = `translate(${(r.width - SCREEN.w * stageScale) / 2}px, ${(r.height - SCREEN.h * stageScale) / 2}px) scale(${stageScale})`;
+}
+new ResizeObserver(fitStage).observe(wrap);
+
+// Start-up.
+renderTuneOpts();
+renderAlgoUI();
+changed();
+showStats(null);
+SCENARIOS.workday();
+fitStage();
+</script>
+</body>
+</html>

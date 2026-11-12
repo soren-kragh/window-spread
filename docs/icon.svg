@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+  <!-- Window Spread icon: four windows of different sizes, loosely spread (never in a grid).
+       Source for extension/window-spread@soren-kragh/icon.png (render at 256x256). -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#2b3a4a"/>
+  <!-- each window: body, title bar with rounded top corners, square bottom edge of the title bar -->
+  <rect x="6" y="10" width="25" height="19" rx="1" fill="#e8edf1"/>
+  <rect x="6" y="10" width="25" height="5" rx="1" fill="#86be43"/><rect x="6" y="12.5" width="25" height="2.5" fill="#86be43"/>
+  <rect x="37" y="6" width="15" height="12" rx="1" fill="#e8edf1"/>
+  <rect x="37" y="6" width="15" height="4.5" rx="1" fill="#86be43"/><rect x="37" y="8.5" width="15" height="2" fill="#86be43"/>
+  <rect x="40" y="23" width="16" height="32" rx="1" fill="#e8edf1"/>
+  <rect x="40" y="23" width="16" height="5" rx="1" fill="#86be43"/><rect x="40" y="25.5" width="16" height="2.5" fill="#86be43"/>
+  <rect x="14" y="35" width="21" height="17" rx="1" fill="#e8edf1"/>
+  <rect x="14" y="35" width="21" height="5" rx="1" fill="#86be43"/><rect x="14" y="37.5" width="21" height="2.5" fill="#86be43"/>
+</svg>

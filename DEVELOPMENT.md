@@ -1,0 +1,569 @@
+# Window Spread: development notes
+
+For whoever continues this project, human or AI. `README.md` explains how to install
+and use the extension; this file explains how it works, why it is the way it is, what
+has been verified and how, and what is still open. Read it before changing anything:
+several "obvious improvements" were tried and are recorded below as rejected, with the
+evidence.
+
+
+## 1. Goal
+
+Replace the window arrangement of Cinnamon's **Show all windows** view (Scale), and of the
+windows inside each workspace in **Show all workspaces** (Expo), with one
+that keeps thumbnails near where the windows really are, keeps their relative sizes, and
+**never depends on stacking order or focus history**. That last point is the original
+motivation: Cinnamon's own Scale view fills a grid in stacking order, so the
+arrangement changes whenever a different window was focused. Status: working on the
+target system (Linux Mint 21.3, Cinnamon 6.0.5, one 2560×1440 monitor), and tested against
+the source of Cinnamon 6.0.5, 6.2.10, 6.4.14, 6.6.9 and 6.8.0 (section 6.1).
+
+
+## 2. Files and the rules that keep them consistent
+
+```
+README.md                         installation and use
+DEVELOPMENT.md                    this file
+lab/window-spread-lab.html        browser lab: simulated desktop, comparison, tuner
+extension/window-spread@soren-kragh/
+  spreadLayout.js                 THE layout engine; the only copy
+  extension.js                    Cinnamon glue: patches the Scale view
+  settings-schema.json            settings dialog definition (generated)
+  metadata.json                   extension metadata
+tools/build-schema.js             generates settings-schema.json from the engine's DEFAULTS
+tests/                            automated checks (section 7)
+```
+
+Rules (each one fixed a real problem):
+
+* **One engine.** `spreadLayout.js` exists once. The extension loads it through
+  `Extension.getCurrentExtension().imports.spreadLayout` on Cinnamon 6.8+, or
+  `require('./spreadLayout')` on 6.0-6.6 (section 6.1); the lab loads it with
+  `<script src="../extension/window-spread@soren-kragh/spreadLayout.js">`; the lab's tuner
+  threads rebuild it from `createSpreadLayout.toString()`. Never paste engine code
+  anywhere else. Consequence: the lab only works from inside this folder.
+* **Defaults live in the engine.** `DEFAULTS` (section 1 of `spreadLayout.js`) is the
+  only place default values are defined. The lab reads them from there.
+  `settings-schema.json` needs its own copy for Cinnamon's dialog, so it is generated:
+  after changing a default, run `node tools/build-schema.js`. The extension also
+  compares the two at startup and logs a warning if they differ, and a test fails.
+* **The engine knows nothing about the DOM, Cinnamon, or stacking.** Its input is window
+  frames `{id, x, y, w, h}` and a monitor rectangle; any other fields are ignored.
+* **The engine is stateless and deterministic.** Remembering (the cache) is a separate,
+  optional helper, `SpreadLayout.createCache()`.
+* **JavaScript features:** the engine and extension use arrow functions, spread,
+  `Map`, typed arrays: nothing newer than roughly ES2018, all supported by Cinnamon
+  6.0's JavaScript engine. The tests avoid optional chaining (`?.`) and `??` so they run
+  on Mint 21.3's packaged Node 12.
+
+
+## 3. Architecture
+
+### Engine (`spreadLayout.js`)
+
+Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
+`compute(windows, monitor, algorithm, settings)`, `createCache()`, `score(...)`,
+`random(seed)`; documented at the top of the file.
+
+`compute()` pipeline:
+
+1. **Algorithm**, one of
+   * `anneal`: the optimizer. Simulated annealing over window centers, in "layout units"
+     (true relative sizes, one shared scale). Several starts race (section 5.3); aimed
+     moves (5.10); cached pair values (5.11).
+   * `natural`: push apart, then scale.
+   * `rows`: ordered rows.
+   * `grid`: equal grid. Each window goes in its nearest cell: the assignment with the
+     smallest total distance between windows and cells, computed exactly with the
+     Hungarian method (`assignOptimal`, 5.15). Scales windows unevenly.
+2. **Placement:** unless `centered`, the arrangement is moved as a whole toward the real
+   windows, as far as the work area allows (5.2).
+3. **Polish** (anneal, natural): greedy small moves into free space that lower the
+   score (5.2).
+4. **Safeguard** (anneal): the push-apart and rows layouts the optimizer started from
+   are finished the same way, and the best-scoring layout wins (5.7).
+5. **Fill gaps** (optional): thumbnails grow into free space.
+6. **Score.**
+
+**Score** (lower is better; the same function drives the optimizer, the polish, and all
+comparisons): `wScale × size + wSizes × distortion + wDisp × movement + wRel × relations`
+(+ an overlap term that only matters during the search). Size is the mean of −ln(scale)
+after removing the intended size-fidelity factor. Distortion is the mean absolute
+deviation of log scales (0 for one shared scale). Movement is the mean distance from
+real centers, relative to the screen diagonal. Relations come in two methods: "order"
+(left/right, above/below flips, weighted by orientation: 5.8) and "direction" (change
+of angle between window pairs, with neighbor focus). Internal constants are in
+`INTERNAL` (section 2 of the file), with comments.
+
+### Extension (`extension.js`)
+
+While enabled, it replaces two methods of Cinnamon's `WorkspaceMonitor` (6.0.5,
+`js/ui/workspace.js`):
+
+* `_computeAllWindowSlots(n)`: calls the engine (through the cache, one slot per
+  monitor and workspace) and returns, per window, a slot exactly the size of its
+  thumbnail plus Cinnamon's decorations, in Cinnamon's slot format
+  `[xCenter, yCenter, xFraction, yFraction]`. Cinnamon's own `_computeWindowLayout` then
+  fits each window into its slot, which puts the thumbnail exactly where the engine said;
+  animations, titles and clicks stay Cinnamon's.
+* `selectAnotherWindow(symbol)`: arrow keys move to the nearest thumbnail in that
+  direction (Cinnamon's version assumes its grid). Other keys use the original.
+
+Both fall back to Cinnamon's original on any error, so the view never breaks, and both
+use the original while the `scale-enabled` switch is off. Keyboard navigation checks the
+switch itself too: switched off while the view is open, the clones still carry positions
+from the extension's earlier layout (a test covers this case). Details:
+
+* **Decorations:** the close button overhangs above and at the sides, the title sits
+  below (`WindowOverlay.chromeHeights/chromeWidths`). The engine gets the monitor
+  shrunk by the decorations, and the gap = the user's gap + max(top + bottom,
+  left + right).
+* **Title width:** Cinnamon limits every title to one shared width (`_slotWidth`); the
+  extension sets it to the smallest thumbnail width plus the gap, so no title can reach
+  a neighbor.
+* **Margin:** Cinnamon's own 1% margin is replaced by the extension's margin setting.
+* **Max scale:** Cinnamon caps thumbnails at scale 1, so the setting's maximum is 1.
+* **Window identity:** `metaWindow.get_stable_sequence()`, which Cinnamon itself uses.
+* **Keyboard navigation** keeps each thumbnail's center in the extension's own `WeakMap`
+  (keyed by Cinnamon's window clone), not as a property on Cinnamon's objects, which are
+  GObject-based classes from 6.8 on.
+* **Minimized windows** are passed with their normal frame like any other window.
+* **Settings** are read on every layout (cheap); the cache key includes them, so
+  changes take effect at the next opening. The "Restore defaults" button calls
+  `restoreDefaults` on the object `enable()` returns.
+* **Diagnostics** (setting "Write diagnostics to the log"): one line per workspace per
+  opening (indexes, visible workspace name, counts, cache use, time, score), minimized
+  window frames, and the decoration sizes once per session.
+
+**Show all workspaces (Expo).** Each workspace thumbnail is an `ExpoWorkspaceThumbnail`;
+its `overviewModeOn()` arranges that workspace's windows (on hover, on window changes, or
+for all thumbnails at once). Unlike Scale, Cinnamon writes the grid calculation inline in
+that method, so there is no smaller method to replace: the extension replaces the whole
+method with `expoOverviewModeOn()`, which performs the same steps as Cinnamon's (hide
+windows that don't belong, refresh clones with transients, show urgency, size and place
+app icons, animate with the same timing and completion callbacks) with positions from the
+engine. Rejected alternative: letting Cinnamon's method run and re-animating afterwards,
+because re-animating cancels Cinnamon's animations, whose completion callbacks are what
+make windows and icons visible again.
+* One engine call per monitor over the monitor's full area, as Cinnamon does; a window
+  being dragged keeps its place in the layout but isn't moved (as in Cinnamon).
+* The engine lays out visible frames; Expo positions window *actors*, which include
+  invisible borders. Conversion: `scale = target.w / frame.w`,
+  `actor.x = target.x − (frame.x − actor.x0) × scale` (same for y).
+* App icon badges: scale `0.25 / boxScale / scale`, so every badge is 32 px on screen, as in
+  Cinnamon. Cinnamon anchors the badge to the window *actor's* corner (`ICON_OFFSET` = −5
+  screen px beyond it); the extension anchors it to the *visible frame's* corner at the
+  same offset, and reserves the overhang (5 / boxScale full-size px) in the margin (left,
+  top) and the gap, like the Scale view's decorations (5.16). The constants (100 ms,
+  −5, 0.25) are module-level in Cinnamon and not exported, so they're repeated in
+  `extension.js`; a test compares them with each Cinnamon version's source.
+* Version differences, detected at runtime: 6.0-6.6 keep the clone actor in
+  `window.actor` and the thumbnail scale in `box.scale`; 6.8 makes the clone the actor
+  and renames the scale `box.thumbnail_scale`. The arrangement logic is otherwise
+  identical in 6.0.5 to 6.8.0; a test fingerprints Cinnamon's method so a future change is
+  flagged rather than silently overridden.
+* Own settings: `expo-enabled`, `expo-algorithm` (default equal grid), `expo-margin` and
+  `expo-spacing` (default 14 px, as Cinnamon; room for the badges is added automatically),
+  and its own copies of size fidelity,
+  max scale, centering, gap filling and max growth (`EXPO_SETTINGS_MAP`, same engine
+  defaults as Show all windows). Only the scoring weights and the algorithms' own settings
+  are shared. Each view has an Enable switch (`scale-enabled`, `expo-enabled`); with both
+  off, behavior equals Cinnamon's original exactly (tested: slots, title width, every
+  arrow key, Expo positions, badges and visibility). On both view tabs, settings the equal grid doesn't use are hidden while it is
+  selected (`dependency: "algorithm!=grid"`). Switched off, Cinnamon's original runs. Errors fall back to the original. Cache slots
+  `expo/<monitor>/<workspace>`, separate from Scale's.
+
+### Lab (`lab/window-spread-lab.html`)
+
+Simulated 1920×1080 desktop, the four algorithms with all settings, comparison view,
+measurements, layout cache and minimize simulation, and a multi-threaded tuner for the
+optimizer's settings (Web Workers running the engine rebuilt from its factory; falls
+back to time-slicing on the page). Help texts for every control are in the `INFO` object
+and the `*_UI` tables (section L2/L3 of the lab script). The lab's default settings come
+from the engine.
+
+
+## 4. Guarantees (all covered by tests)
+
+* No stacking order, focus, or minimized state is ever used; input order doesn't matter.
+* Deterministic: same input and settings, same output.
+* No overlaps; gaps at least `spacing`; everything inside the monitor minus `margin`;
+  scale at most `maxScale`.
+* push-apart, rows and the optimizer use one shared scale (exact relative sizes at
+  fidelity 1).
+* The optimizer never scores worse than push-apart or ordered rows given the same
+  settings (`pushStart`, `rowsStart`), as long as it starts from them (directly or via
+  "mixed") and gap filling is off.
+
+
+## 5. Design decisions and the evidence behind them
+
+Scores below come from different stages of the project, with different scoring rules and
+weights; compare numbers only within one table.
+
+### 5.1 Geometry-only processing order
+Windows are sorted by center y, center x, width, height, then id before anything else.
+This makes every algorithm independent of input order, and so of stacking.
+
+### 5.2 Placement toward real windows, and the polish
+Problem seen: a thumbnail obviously could move closer to its window into free space,
+but didn't. Two causes: (a) forced centering made an edge window a "counterweight" for
+the others; (b) the annealing's small final gains are below its noise for most of the
+run, leaving slack. Fixes: placement toward the real windows (instead of centering), and
+a greedy polish. Count of layouts (80 tested, 12 windows) where some window could move
+60 px toward home into free space:
+
+| | old | new |
+|---|---|---|
+| relations weight off | 24 | 1 |
+| relations weight on | 62 | 47 (remaining cases are genuine relation trade-offs) |
+
+### 5.3 Parallel starts racing (successive halving)
+Single searches varied a lot with the seed (average scale 0.42 to 0.53 over 20 seeds).
+Starts now run in lockstep; at checkpoints the worse half is dropped. The checkpoint
+position matters: too early, the search is still hot and scores mean little. 6 desktops ×
+20 seeds, equal total effort:
+
+| setup | mean | worst | seed spread |
+|---|---|---|---|
+| 1 start | 0.9246 | 0.9898 | 0.1165 |
+| 4 starts, equal shares | 0.9193 | 0.9737 | 0.0829 |
+| 4 starts, checkpoint 0.2 | 0.9110 | 0.9669 | 0.0922 |
+| 4 starts, checkpoint 0.5 | 0.9095 | 0.9576 | 0.0817 |
+| 4 starts, checkpoint 0.7 | 0.9184 | 0.9810 | 0.1003 |
+
+The number of starts is broadly flat between 2 and 8 (within about 1%); 12 or more spread
+the effort too thin. The current defaults (3 starts, checkpoint 0.2, temperature 0.1)
+were chosen by the user after running the lab's tuner.
+
+### 5.4 Size distortion term
+The equal grid used to beat the optimizer on some desktops (2 found where it won on all 6
+seeds) purely through the size term: it enlarged small windows more than big ones
+(size spread 1.7 to 2.0), which raised the average scale. Since uneven scaling was one of
+the original complaints, the score now charges for it ("Keep sizes"). After the change: 0
+such desktops. Uniform-scale algorithms are charged only when thumbnails are capped at the
+max scale (some reach it and stop, others don't), which with size fidelity below 1 happens
+to small windows first. The optimizer's search ignores capping; only its safeguard's final
+comparison sees it.
+
+Keep sizes is **not offered in the extension's settings** (it stays at the engine default):
+measured with the extension's settings on a 2560×1440 screen, it changed the layout on 8
+of 280 desktops with typical application window sizes (only with 2-3 windows; never from 4
+windows up). On random desktops full of small windows it changed 13-16 of 25 desktops with
+3-6 windows, but real desktops rarely look like that. A user testing it on the target
+system saw no effect at all. Teaching the optimizer's search about capping was considered
+and dropped for the same reason. In the lab, the slider stays: it keeps comparisons with
+the equal grid fair.
+
+### 5.5 Exact gaps, no outer half-gap
+push-apart and the optimizer used to guess the gap before knowing the final scale (actual
+smallest gaps 18.2 and 20.8 px for a 24 px setting) and also reserved half a gap around
+the outside. Now they widen the padding until the real gap is right, and scale by the
+windows' extent. Result: smallest gap exactly 24.00 px, and *bigger* thumbnails
+(push-apart average scale 0.401 → 0.407, optimizer 0.460 → 0.490).
+
+### 5.6 Starting points
+The optimizer can start from push-apart, rows, grid, the real positions, or "mixed" (one
+kind per parallel start). Average over three sets of 8 desktops: push 0.6139, rows
+0.6104, grid 0.6127, real positions 0.6193, mixed 0.6103. No single start wins
+everywhere; mixed is never far from the best. Rows and grid starts undo their layout's
+scale and resolve overlaps (true-size windows can be too big for grid cells).
+
+### 5.7 Optimizer safeguard, and starts with the algorithms' own settings
+Despite starting from them, the optimizer sometimes lost: to rows in 8 of 120 runs (by at
+most 0.4%, because the rows start is a converted layout), and to push-apart in 2 of 180
+(by up to 4.7%, because its push start used different push settings than the push-apart
+algorithm). Fixes: the safeguard (best of the finished starting layouts and the search
+result), and `pushStart`/`rowsStart` settings so "start from push-apart" means exactly
+the push-apart algorithm as configured. After: 0 losses in 288 runs over 36 setting
+combinations. Effect on the optimizer's own quality was neutral (0.6501 → 0.6498 with the
+default start; mixed 0.6425 → 0.6448).
+
+### 5.8 Order relations weighted by orientation
+Case from the target system: a window near the right edge stayed 90 px above its home
+although the space below was free. Cause: a window on the far left was 32 px lower, so
+the Order method treated the pair as "above/below" and penalized moving down past it.
+Now a pair's left/right relation counts by cos² of the angle between the windows, its
+above/below relation by sin². On that desktop the window moved to 1 px from home and the
+average distance of all windows from home went from 136 to 125 px at the same scale.
+Ordered rows benefited noticeably (Workday scenario 0.632 → 0.541).
+
+### 5.9 Rejected: leveling off the Direction penalty
+Case: with neighbor focus 0.7, a window was held in place by the angles to its two
+nearest neighbors, whose thumbnails were themselves displaced. Idea: cap the penalty for
+already-broken relations (`c · (1 − e^(−x/c))`). Measured, it made things worse: it weakens
+the relations term overall, and with thumbnail size weighted at 4 the optimizer packs
+tighter instead:
+
+| level c | that window's distance from home | random desktops: scale | movement | direction change |
+|---|---|---|---|---|
+| unchanged | 153 px | 0.641 | 244 px | 14.6° |
+| 0.15 | 170 px | 0.666 | 257 px | 20.2° |
+| 0.08 | 215 px | 0.676 | 252 px | 22.8° |
+| 0.02 | 234 px | 0.681 | 257 px | 25.4° |
+
+Conclusion: it was a weights question. The user then lowered neighbor focus to 0.5 and
+keep relations to 1, and raised stay in place to 2 (current defaults).
+
+### 5.10 Aimed moves
+A share of moves jump a random part of the way toward the window's "home" (its real
+center mapped into the current arrangement) instead of a random direction. Validated on
+desktops not used to design it:
+
+| windows | old, 30k moves | new, 15k | new, 30k |
+|---|---|---|---|
+| 5 | 0.6421 | 0.6427 | 0.6421 |
+| 8 | 0.8840 | 0.8763 | 0.8795 |
+| 12 | 1.1332 | 1.1549 | 1.1129 |
+| 16 | 1.4054 | 1.4224 | 1.3602 |
+| 20 | 1.6383 | 1.5876 | 1.5015 |
+| 28 | 1.9908 | 1.9187 | 1.8476 |
+
+It slightly hurt small desktops in the first experiment, so the share ramps from 0 at 6
+windows to 25% at 14 (`INTERNAL.AIM_*`).
+
+### 5.11 Performance
+About 400 ns per optimizer move (8 windows) after caching pair values (overlap and relation per
+pair, updated only on accepted moves) and multiplicative cooling (1.4× faster, same
+quality). Profile: 57% the move itself (pair checks), 22% rescoring, 8% random numbers;
+no single waste left. Effort vs quality: up to about 6 windows quality saturates near 15k
+moves; from 8 windows up it keeps improving to 60k (at 24 windows, 30k is 4.5% worse than
+60k). Default effort is 10k (user's choice), with the cache making recomputation rare.
+
+### 5.12 Cache
+Last layout per slot (monitor and workspace), exact match on window ids and frames,
+monitor, algorithm and the engine settings in use. The key is built in canonical order
+(windows sorted by id), so stacking and focus changes reuse it. Considered and decided
+against (for now): deferring other workspaces and pre-warming the cache in the
+background; the cache already makes reopening practically free.
+
+### 5.13 Settings window on pages
+Mint's slider widget (python3-xapp `SettingsWidgets.Range`) installs its own scroll
+handler that changes the value and swallows the event, so scrolling the window over a
+slider changes it. This can't be switched off from the schema. Fix: short pages (six now,
+at most 9 settings each, and settings that don't apply are hidden with `dependency`).
+The dialog allows only one condition per setting, but sections can have their own: each
+view tab therefore has its Enable switch in one section and everything else in a section
+hidden while the switch is off, and settings inside keep their own conditions (equal grid,
+fill gaps). Supported in the dialog of Cinnamon 6.0.5 to 6.8.0 (`add_reveal_section`).
+Remaining corner case: max growth follows fill gaps only, so it stays visible if fill gaps
+is on and the equal grid is then chosen.
+so no scrolling is needed. (Custom widgets were considered: more code, more fragile.)
+
+### 5.14 No spin button with the value 0
+Cinnamon's settings dialog only passes a value to a widget if it differs from the widget's
+current value (`set_object_value()` in `JsonSettingsWidgets.py`). A new GTK spin button
+already holds 0, so a spin button whose setting is 0 is never updated and shows no number
+at all (the value itself is correct). Hence "Number of rows", where 0 means automatic, is a
+drop-down (Automatic, 1 row, ... 8 rows); drop-downs are set through a listener and don't
+have this problem. A test fails if a spin button gets a default of 0. Margin and gap would
+also show blank if a user set them to exactly 0; harmless and rare, so left as is.
+
+### 5.15 Equal grid: nearest cell (Hungarian method)
+The grid used to fill cells in reading order of window position (rows by height, then left
+to right). That's independent of stacking, but rows are filled by count, so a window could
+land in a row far from its height. Now each window goes in its nearest cell: the
+assignment of windows to cells with the smallest total distance (center to center),
+solved exactly by the Hungarian method in O(n³), about 0.3 ms for 20 windows. Measured
+average distance from home, 20 random desktops per size: 4 windows 395 → 361 px, 9
+windows 354 → 303 px, 20 windows 326 → 290 px (7-14% less). Verified optimal against
+brute force. The reading-order variant was removed rather than kept as an option: the
+nearest-cell assignment is never worse in total, and an option nobody needs is noise
+(user's decision). Side effect: the optimizer's "grid" start improved, and with the default
+Mixed start its average score went from 2.6126 to 2.5890 (better in 27, worse in 9 of 120
+runs).
+
+### 5.16 Expo badges anchored to the visible window
+Symptom on the target system: app icon badges collided with neighboring windows in Show all
+workspaces, though never in Cinnamon's own Expo. A first "fix" raised the Expo margin and gap
+to 32 px, with the claim that badges need the room. That was wrong: Cinnamon's grid uses 14
+px without collisions. The real cause: the badge is a child of the window actor, positioned
+relative to the actor's corner, and the actor includes invisible borders (resize borders,
+and wide shadows on windows that draw their own, such as GTK apps). Cinnamon spaces actors,
+so a badge stays in its own window's invisible border area. The extension spaces the
+visible frames, so a badge anchored at the actor's corner ended up far outside the visible
+window, in the gap or over a neighbor. Fix: anchor the badge to the visible frame's corner
+and reserve its 5-screen-pixel overhang in margin and gap; defaults back to 14 px. The
+tests now use windows with no, typical (10 px) and wide uneven (shadow) invisible borders,
+and check badge placement and clearance directly; against the previous code they fail
+(5 checks, including a badge touching another window). Lesson: test windows with uniform
+10 px borders hid the problem; simulate realistic variety.
+
+### 5.17 Wording
+Tooltips in the settings window describe what a setting does, in terms a user can see; how
+it is implemented (decorations, badge overhang, coordinate systems, Cinnamon internals)
+belongs in the code comments and in this file (user's decision).
+
+The equal grid is not called "Cinnamon-like": it resembles Cinnamon's grid but, unlike
+it, never depends on stacking. The optimizer is not labeled "recommended" (user's choice).
+
+
+## 6. Verified facts about Cinnamon 6.0.5
+
+All read from the official source (github.com/linuxmint/cinnamon, tag 6.0.5), whose files
+are byte-identical to those installed on the target system (SHA-256 in
+`tests/lib/cinnamon.js`).
+
+* **Scale view** (`js/ui/workspace.js`): `WorkspaceMonitor` per monitor per workspace.
+  `positionWindows()` gives slot *i* to window *i* of `this._windows`;
+  `_computeAllWindowSlots(n)` only knows the count; `syncStacking()` sorts `_windows` by
+  minimized state, then stacking. `setGeometry()` uses the full monitor with a margin of
+  1% of its width. Keyboard: `selectAnotherWindow()` with `misc/gridNavigator.js`.
+* **All workspaces are laid out when the view opens** (`workspacesView.js` creates every
+  workspace and calls `zoomToOverview()`), in index order, so you can switch workspaces
+  inside the view. Empty workspaces are skipped by the extension.
+* **Workspace names:** index from 0 internally; shown as the custom name or
+  "Workspace " + (index + 1) (`main.js` `getWorkspaceName`). Monitors are indexed from 0
+  in `Main.layoutManager.monitors`; their order isn't known to match Display settings.
+* **Extension loading** (`js/misc/fileUtils.js`): files run inside a wrapper providing
+  `require`, `exports`, `module`; top-level names are auto-exported unless the file
+  assigns `module.exports` at the start of a line. Required functions: `init`, `enable`,
+  `disable` (`js/ui/extension.js`); `enable()` may return an object whose functions
+  settings-dialog buttons can call (`extensionSystem.js`, `cinnamonDBus.js`).
+  `metadata.json` must have uuid, name, description, cinnamon-version; `url` is checked for
+  non-emptiness only (warning) and not otherwise used by the Extensions dialog.
+* **Settings** (`js/ui/settings.js`, `xlet-settings.py`, python3-xapp): supported widget
+  types include switch, scale, spinbutton, combobox, button, section, layout pages;
+  `dependency` supports `key`, `!key` and comparisons (`=`, `!=`, `<`, ...). A layout must be
+  the file's first entry. Saved values live in `~/.config/cinnamon/spices/<uuid>/`; when
+  the schema changes, saved values are kept and only new settings get defaults.
+* **Expo** ("Show all workspaces") is separate: `js/ui/expoThumbnail.js`,
+  `ExpoWorkspaceThumbnail.overviewModeOn()`, has its own grid per monitor (spacing 14) and
+  also orders windows by stacking ("top-to-bottom order"), sorted in its own
+  `syncStacking()`. `overviewModeOff()` animates back to `origX/origY` (the actor's real
+  position). Clones are positioned by the window actor (`realWindow.x/y/width/height`),
+  which includes invisible borders.
+
+### 6.1 Cinnamon 6.2 to 6.8
+
+Tested against the source of the latest release of each series (as of November 2026):
+6.0.5, 6.2.10, 6.4.14, 6.6.9, 6.8.0. All tests pass on all of them.
+
+* **6.0 to 6.6** share the same extension loader (`createExports()` in `fileUtils.js`,
+  providing `require()`) and the same object-style `WorkspaceMonitor`.
+* **6.8** changed both:
+  * Extensions are loaded by GJS's **native importer**: an extension's top-level `var` and
+    `function` declarations are its exports; local files are reached through
+    `imports.ui.extension.getCurrentExtension().imports` (which works while the main file is
+    loading, via `currentlyLoadingExtension`). `require()` and `module.exports` still work
+    through a shim (`globalThis.require = xletRequire`) but log a **deprecation warning**.
+    The extension therefore uses `getCurrentExtension()` when it exists and `require()`
+    otherwise. The engine's `var SpreadLayout` is what the native importer exposes; its
+    `module.exports` line is only used by the `require()` paths.
+  * `WorkspaceMonitor` is a class (`GObject.registerClass(class WorkspaceMonitor extends
+    Clutter.Actor ...)`). The methods the extension replaces are ordinary prototype
+    methods with unchanged names and slot format, so patching works the same way.
+  * `_computeWindowLayout()` no longer rounds positions down, so thumbnails land exactly
+    where the engine puts them (0.00 px deviation in the tests).
+* `cinnamon-version` in `metadata.json` lists **minimum** versions (Cinnamon's
+  `versionCheck()`, unchanged from 6.0 to 6.8), so `"6.0"` covers all of these.
+
+### 6.2 Measured on the target system
+
+Via the diagnostics log:
+
+* Decorations: top 14, bottom 36, left 14, right 14 px (effective gap 66 px with the gap
+  setting at 16 px; 58 px with the current default of 8 px). Because the decorations are
+  added to margin and gap automatically, the Show all windows defaults are small (16 / 8).
+* Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
+* First computation of a 6-window workspace: about 22 ms; cache hits: about 0.2 ms.
+
+
+## 7. Testing
+
+Run everything with `node tests/run-all.js` (Mint: `sudo apt install nodejs`). About 80
+checks, a few seconds. Against several Cinnamon versions at once:
+`node tests/run-versions.js` (default: the latest of each series from 6.0 to 6.8) or
+`node tests/run-versions.js 6.8.1 6.8.2` for specific ones.
+
+* `tests/engine.test.js`: the guarantees for all algorithms, uniform scale, monitors
+  elsewhere, the optimizer safeguard, the cache, rebuilding from the factory, and the
+  grid's nearest-cell assignment (against brute force, also the Hungarian method on its
+  own with ties and negative costs).
+* `tests/schema.test.js`: `settings-schema.json` equals the generator's output; defaults
+  match the engine; the extension reads exactly the defined settings; widget types and
+  required fields as Cinnamon's dialog and `settings.js` expect; pages; `metadata.json`
+  against the required properties and the real `versionCheck()` of that Cinnamon version.
+* `tests/extension.test.js`: the extension against Cinnamon's real code. It loads the
+  extension with that version's real loader: `createExports()` from `fileUtils.js` on
+  6.0-6.6; on 6.8, the `require()` shim, `module`/`exports` handling and
+  `getCurrentExtension()` from `extension.js` (only GJS's native importer is simulated).
+  It builds the Scale view's `WorkspaceMonitor` from the real methods in `workspace.js`
+  (object-style or class-style), with Cinnamon's grid navigator and workspace naming.
+  For Show all workspaces, it runs Cinnamon's real `overviewModeOn()` and the extension's
+  replacement side by side on identical simulated windows (two monitors, invisible
+  borders, a minimized window, one that doesn't belong, one being dragged) and checks the
+  same behavior (hiding, clone refresh, urgency, icon size and offset, visibility after
+  animating), exact placement of visible frames, independence from stacking (where
+  Cinnamon's own depends on it), separate cache slots, every algorithm, switched-off
+  equals Cinnamon exactly, error fallback, and edge cases (repeated calls, empty monitor,
+  oversized window, 30 windows). Then it checks that Cinnamon's own fitting code
+  places thumbnails where the engine says, decorations never collide, stacking has no
+  effect, caching per workspace, diagnostics, keyboard navigation, error fallback, the
+  restore button, and that disabling restores the originals.
+* `tests/lab.test.js`: the lab in a simulated browser (needs `jsdom`, see the file;
+  skipped otherwise).
+
+Cinnamon sources: the installed files in `/usr/share/cinnamon` are used if present;
+otherwise (or with `CINNAMON_SOURCE=download`) the version from `cinnamon --version`
+(or `CINNAMON_VERSION`, default 6.0.5) is downloaded from GitHub into
+`tests/.cinnamon-src/`. The output notes whether the files match 6.0.5.
+
+**Checking a new Cinnamon version:** run `node tests/run-versions.js <version>` (or
+`node tests/run-all.js` on the upgraded system). If it fails, compare the version's
+`js/ui/workspace.js` (the five methods in section 3) and its extension loader
+(`js/misc/fileUtils.js`, `js/ui/extension.js`) with the last version that passed. If a
+new release changes the loader again, `makeLoader()` in `tests/extension.test.js` needs a
+matching branch, built from that version's real code like the existing two.
+
+Not testable here: a real Cinnamon session (rendering, animation, real input). The
+target system's checks are in README's "Checking that it works".
+
+
+## 8. Open items
+
+* **Separate horizontal and vertical gaps** in the engine. Thumbnails need 50 px of
+  decorations vertically but only 28 px horizontally on the target system; with one gap,
+  side-by-side thumbnails are 22 px further apart than necessary.
+* **Time budget** for the optimizer (stop after N ms instead of a fixed effort), if
+  first-time computation ever feels slow. Cinnamon's JavaScript runs on the compositor's
+  thread, so long computations freeze the desktop briefly.
+* **Stability between invocations** (keep thumbnails where they were when only one window
+  changed): would need the previous layout as an extra starting point; not started.
+* **Future Cinnamon versions:** 6.0 to 6.8 are tested. For newer releases, run
+  `node tests/run-versions.js <version>` first (section 7). The `require()` fallback is
+  only needed for 6.0-6.6 and can be dropped once those are no longer used.
+
+
+## 9. Publishing
+
+* **GitHub** (`soren-kragh/window-spread`): the repository as it is. The README's Install
+  section is written for visitors who just want to copy the extension folder.
+  `docs/screenshot.png` (a screenshot of Show all windows) is shown at the top of the
+  README and is also needed for Spices.
+* **Cinnamon Spices**: `node tools/build-spices.js` builds `dist/spices/<UUID>/` in the
+  structure Spices requires (`info.json` and a Spices-specific README from
+  `tools/spices/`, `screenshot.png` from `docs/`, and `files/<UUID>/` = the extension
+  folder). It checks the result against Spices' rules, the same as their `validate-spice`
+  script. Copy that folder into your fork of `linuxmint/cinnamon-spices-extensions`, run
+  `./validate-spice <UUID>` there, and open a pull request. `tests/spices.test.js` runs
+  the real `validate-spice` on a build (needs python3 with PIL; Mint: `python3-pil`).
+  Spices forbids pointing users to downloads elsewhere, so the Spices README links to
+  the repository only for bug reports and development.
+* **Icon**: `docs/icon.svg` is the source; render it to the extension's `icon.png` at
+  256×256 (square, as Spices requires).
+* **License**: MIT-0 (`LICENSE`, also inside the extension folder so the Spices copy states
+  it explicitly; the Spices repository's own default is GPL version 2).
+
+## 10. Workflow for changes
+
+1. Change the engine and try it in the lab (it loads the same file).
+2. Changed a default or a setting's label, range or page? Edit `DEFAULTS` or
+   `tools/build-schema.js`, then run `node tools/build-schema.js`.
+3. Run `node tests/run-all.js`.
+4. Copy `extension/window-spread@soren-kragh` to `~/.local/share/cinnamon/extensions/` and
+   restart Cinnamon (Alt+F2, `r`). If defaults changed, press "Restore all settings to
+   their defaults" in the extension's settings.
+5. Record new decisions and evidence in section 5 of this file.
+6. To publish a new version: raise `version` in `metadata.json`, push to GitHub, and for
+   Spices rebuild with `node tools/build-spices.js` and open a pull request (section 9).
