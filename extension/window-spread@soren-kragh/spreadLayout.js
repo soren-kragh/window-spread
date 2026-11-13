@@ -328,48 +328,75 @@ function finalize(items, R, A, S) {
    One score for any finished layout; lower is better. Shared by all algorithms,
    the optimizer's search (in layout units) and the polish step.
    -------------------------------------------------------------------------- */
-// Relations term, shared by the scorer and the optimizer. O* = real centers and sizes,
-// NW/NH = current sizes (thumbnail or layout sizes). Returns pen(X, Y, i, j) for current
-// centers X, Y, plus the normalizer relNorm (sum of pair weights).
+// Direction method: penalty of a pair with weight wt and real direction (unit
+// vector ux, uy) that now points along (ndx, ndy): 0 if the same, wt if
+// opposite.
+const dirPen = (wt, ux, uy, ndx, ndy) => {
+  const d = Math.sqrt(ndx * ndx + ndy * ndy);
+  return d < 1e-6 ? wt * 0.5 : wt * (1 - (ux * ndx + uy * ndy) / d) / 2;
+};
+// Relations term, shared by the scorer and the optimizer. O* = real centers and
+// sizes, NW/NH = current sizes (thumbnail or layout sizes). Returns
+// pen(X, Y, i, j) for current centers X, Y, and the normalizer relNorm (sum of
+// pair weights). Direction method (rows: true): the pair values also come as
+// n×n row arrays, for hot loops to read directly. For window i and another
+// window j, at k = i * n + j, RW[k] is the pair's weight and (RUX[k], RUY[k])
+// the real unit direction from i to j; dirPen takes them with (ndx, ndy) =
+// center of j minus center of i.
 function makeRelations(OX, OY, OW, OH, NW, NH, S, diag) {
-  const n = OX.length, order = S.relMode === "order", relOn = S.wRel > 0, pairs = new Array(n * n);
+  const n = OX.length, order = S.relMode === "order", relOn = S.wRel > 0;
+  const rows = relOn && !order;
+  const pairs = order ? new Array(n * n) : null;
+  const RW = rows ? new Float64Array(n * n) : null;
+  const RUX = rows ? new Float64Array(n * n) : null;
+  const RUY = rows ? new Float64Array(n * n) : null;
   let relNorm = 0;
   if (relOn) {
     const near = INTERNAL.NEAR * diag;
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
       const odx = OX[j] - OX[i], ody = OY[j] - OY[i], d = Math.sqrt(odx * odx + ody * ody);
-      const pr = { sx: Math.sign(odx), sy: Math.sign(ody) };
       if (order) {
         // Confidence that the pair is side by side (cx) or one above the other (cy): how clearly
         // they are separated along that axis, times how much the pair is oriented along it
         // (cos² / sin² of the angle between them). Two windows far apart at almost the same
         // height are side by side, not "above" each other, so their vertical order barely counts.
+        const pr = { sx: Math.sign(odx), sy: Math.sign(ody) };
         const hx = d > 1e-6 ? (odx * odx) / (d * d) : 0, hy = d > 1e-6 ? (ody * ody) / (d * d) : 0;
         pr.cx = Math.min(1, Math.abs(odx) / ((OW[i] + OW[j]) / 4)) * hx;
         pr.cy = Math.min(1, Math.abs(ody) / ((OH[i] + OH[j]) / 4)) * hy;
         pr.nx = (NW[i] + NW[j]) / 4; pr.ny = (NH[i] + NH[j]) / 4;
         pr.wt = pr.cx + pr.cy;
+        relNorm += pr.wt; pairs[i * n + j] = pr;
       } else {
-        pr.ux = d > 1e-6 ? odx / d : 0; pr.uy = d > 1e-6 ? ody / d : 0;
-        pr.wt = d > 1e-6 ? Math.pow(near / (d + near), 4 * S.relNear) : 0;
+        const ux = d > 1e-6 ? odx / d : 0, uy = d > 1e-6 ? ody / d : 0;
+        const wt = d > 1e-6 ? Math.pow(near / (d + near), 4 * S.relNear) : 0;
+        const a = i * n + j, b = j * n + i;
+        RW[a] = RW[b] = wt;
+        RUX[a] = ux; RUX[b] = -ux;
+        RUY[a] = uy; RUY[b] = -uy;
+        relNorm += wt;
       }
-      relNorm += pr.wt; pairs[i * n + j] = pr;
     }
   }
   const pen = (X, Y, p, q) => {
+    if (!order) {
+      const k = p * n + q, wt = RW[k];
+      return wt ? dirPen(wt, RUX[k], RUY[k], X[q] - X[p], Y[q] - Y[p]) : 0;
+    }
     const i = p < q ? p : q, j = p < q ? q : p, pr = pairs[i * n + j];
     if (!pr.wt) return 0;
+    // 0 while the order is kept, up to the pair's weight once clearly flipped
     const ndx = X[j] - X[i], ndy = Y[j] - Y[i];
-    if (order) // 0 while the order is kept, rising to the pair's weight once clearly flipped
-      return pr.cx * clamp(-pr.sx * ndx / pr.nx, 0, 1) + pr.cy * clamp(-pr.sy * ndy / pr.ny, 0, 1);
-    const d = Math.sqrt(ndx * ndx + ndy * ndy);
-    if (d < 1e-6) return pr.wt * 0.5;
-    return pr.wt * (1 - (pr.ux * ndx + pr.uy * ndy) / d) / 2; // 0 same direction, weight if opposite
+    return (
+      pr.cx * clamp(-pr.sx * ndx / pr.nx, 0, 1) +
+      pr.cy * clamp(-pr.sy * ndy / pr.ny, 0, 1)
+    );
   };
-  return { relOn, relNorm, pen };
+  return { relOn, relNorm, pen, rows, RW, RUX, RUY };
 }
-// Scorer for thumbnails T (sizes fixed): parts(X, Y) for full scores, delta() for the
-// change when one thumbnail moves (used by polish).
+// Scorer for thumbnails T (sizes fixed): parts(X, Y) for full scores, plus the
+// pieces the polish evaluates itself (real centers OX/OY, relations, and the
+// weights kDisp, kRel, kOv of the movement, relations and overlap terms).
 function makeScorer(T, ws, S, A) {
   const by = new Map(ws.map(w => [w.id, w])), n = T.length, O = T.map(t => by.get(t.id));
   const amax = Math.max(...O.map(w => w.w * w.h));
@@ -399,21 +426,7 @@ function makeScorer(T, ws, S, A) {
     p.total = p.size + p.sizes + p.move + p.rel + p.overlap;
     return p;
   }
-  // Change in score when thumbnail i moves to (nx, ny), all others fixed.
-  function delta(X, Y, i, nx, ny) {
-    const px = X[i], py = Y[i];
-    const local = () => {
-      let v = kDisp * dist(X, Y, i);
-      for (let j = 0; j < n; j++) if (j !== i) { if (rel.relOn) v += kRel * rel.pen(X, Y, i, j); v += kOv * overlapArea(X, Y, Wt, Ht, i, j); }
-      return v;
-    };
-    const before = local();
-    X[i] = nx; Y[i] = ny;
-    const after = local();
-    X[i] = px; Y[i] = py;
-    return after - before;
-  }
-  return { parts, delta, Wt, Ht, n };
+  return { parts, Wt, Ht, n, OX, OY, rel, kDisp, kRel, kOv };
 }
 function scoreLayout(T, ws, S, A) {
   return makeScorer(T, ws, S, A).parts(T.map(t => t.x + t.w / 2), T.map(t => t.y + t.h / 2));
@@ -498,7 +511,7 @@ function layoutRows(ws, S, A) {
 
 // Optimizer: simulated annealing over window centers in layout units (one shared scale,
 // exact relative sizes). Several starts race; at checkpoints the worse half is dropped.
-function layoutAnneal(ws, S, A, info) {
+function layoutAnneal(ws, S, A, info, shared) {
   const items = prep(ws, S), n = items.length, pad = estPad(items, S, A);
   const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad, h: it.lh + pad }));
   if (n < 2) return finalize(items, R0, A, S);
@@ -506,14 +519,19 @@ function layoutAnneal(ws, S, A, info) {
   // Starting points. "none" = real (overlapping) positions; "push" = push-apart with the
   // push-apart algorithm's settings (S.pushStart); "rows" / "grid" = those layouts' centers
   // with their overall scale undone, then overlaps resolved (true-size windows can be too
-  // big for grid cells).
+  // big for grid cells). The push-apart and ordered-rows layouts are also handed
+  // to the safeguard (`shared`), which would otherwise compute them again.
   const startCache = {};
   const startPos = kind => {
     if (startCache[kind]) return startCache[kind];
     const R = R0.map(r => ({ ...r })), push = S.pushStart, P = INTERNAL.START_RESOLVE;
-    if (kind === "push") resolve(R, push.iterations, push.step, push.aspect, A, random(INTERNAL.SEED_TIES)); // = the push-apart algorithm's first step
-    else if (kind === "rows" || kind === "grid") {
+    if (kind === "push") { // = the push-apart algorithm's first step
+      const rng = random(INTERNAL.SEED_TIES);
+      resolve(R, push.iterations, push.step, push.aspect, A, rng);
+      shared.push = { items, R: R.map(r => ({ ...r })) };
+    } else if (kind === "rows" || kind === "grid") {
       const T = kind === "rows" ? layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A) : layoutGrid(ws, S, A);
+      if (kind === "rows") shared.rows = T;
       const byId = new Map(T.map(t => [t.id, t]));
       let ls = 0;
       for (const it of items) ls += Math.log(byId.get(it.id).w / it.lw);
@@ -533,6 +551,7 @@ function layoutAnneal(ws, S, A, info) {
   const T0 = S.temp;
   const rel = makeRelations(OX, OY, items.map(it => it.ow), items.map(it => it.oh), items.map(it => it.lw), items.map(it => it.lh), S, A.diag);
   const relOn = rel.relOn, relPen = rel.pen;
+  const relRows = rel.rows, RW = rel.RW, RUX = rel.RUX, RUY = rel.RUY;
 
   // The same score as scoreLayout(), computed in layout units: the arrangement is scaled to
   // fit and placed as the pipeline will place it (centered, or toward the real windows).
@@ -601,7 +620,13 @@ function layoutAnneal(ws, S, A, info) {
     let dO = 0, dR = 0;
     for (let j = 0; j < n; j++) if (j !== i) {
       const o = overlapArea(X, Y, W, H, i, j); newO[j] = o; dO += o - OV[row + j];
-      if (relOn) { const r = relPen(X, Y, i, j); newR[j] = r; dR += r - RL[row + j]; }
+      if (relRows) { // = relPen(X, Y, i, j), read straight from the row arrays
+        const k = row + j, wt = RW[k];
+        const r = wt ? dirPen(wt, RUX[k], RUY[k], X[j] - X[i], Y[j] - Y[i]) : 0;
+        newR[j] = r; dR += r - RL[k];
+      } else if (relOn) {
+        const r = relPen(X, Y, i, j); newR[j] = r; dR += r - RL[row + j];
+      }
     }
     const c = cost(ch, ch.ov + dO, ch.rel + dR);
     if (c <= ch.cur || rng() < Math.exp((ch.cur - c) / T)) {
@@ -663,56 +688,229 @@ function placeNearReal(T, ws, A) {
   return T.map(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
 }
 
-// Greedy polish: small moves in 8 directions with shrinking steps, kept only if they lower
-// the score. A thumbnail only moves into free space: never closer to a neighbor than the gap
-// (or than it already was), never outside the work area.
+// Greedy polish: small moves in 8 directions with shrinking steps, kept only if
+// they lower the score. A thumbnail only moves into free space: never closer to
+// a neighbor than the gap (or than it already was), never outside the work
+// area.
+//
+// Only the score terms involving the moving thumbnail change, so a move is
+// judged by local() of that thumbnail before and after. The work is kept small
+// without changing any result (it is exactly that of checking every move
+// against every other thumbnail):
+// * local() at the current position is computed once, not per candidate move.
+// * Only neighbors within reach of the step (near list) can block or overlap.
+// * Overlap terms are exactly 0 while nothing overlaps, and skipped then.
+// * A thumbnail whose last scan found nothing is skipped until another moves.
 function polishLayout(T, ws, S, A) {
-  const sc = makeScorer(T, ws, S, A), n = sc.n, Wt = sc.Wt, Ht = sc.Ht, g = S.spacing;
+  const sc = makeScorer(T, ws, S, A), n = sc.n, g = S.spacing;
   if (n < 1) return { T, moved: 0, gain: 0 };
-  const X = T.map(t => t.x + t.w / 2), Y = T.map(t => t.y + t.h / 2);
-  const sep = (i, j, x, y) => Math.max(Math.abs(x - X[j]) - (Wt[i] + Wt[j]) / 2, Math.abs(y - Y[j]) - (Ht[i] + Ht[j]) / 2);
-  const fits = (i, x, y) => {
-    if (x - Wt[i] / 2 < A.x - 0.5 || x + Wt[i] / 2 > A.x + A.w + 0.5 || y - Ht[i] / 2 < A.y - 0.5 || y + Ht[i] / 2 > A.y + A.h + 0.5) return false;
-    for (let j = 0; j < n; j++) if (j !== i && sep(i, j, x, y) < Math.min(g, sep(i, j, X[i], Y[i])) - 1e-6) return false;
-    return true;
+  const Wt = Float64Array.from(sc.Wt), Ht = Float64Array.from(sc.Ht);
+  const X = Float64Array.from(T, t => t.x + t.w / 2);
+  const Y = Float64Array.from(T, t => t.y + t.h / 2);
+  const OX = sc.OX, OY = sc.OY, kDisp = sc.kDisp, kRel = sc.kRel, kOv = sc.kOv;
+  const rel = sc.rel, relOn = rel.relOn, rows = rel.rows;
+  const RW = rel.RW, RUX = rel.RUX, RUY = rel.RUY;
+  const ax1 = A.x - 0.5, ax2 = A.x + A.w + 0.5;
+  const ay1 = A.y - 0.5, ay2 = A.y + A.h + 0.5;
+  const avg = sc.Wt.reduce((q, w, i) => q + Math.sqrt(w * Ht[i]), 0) / n;
+  const step0 = avg * INTERNAL.POLISH_FIRST_STEP;
+  // Separation of thumbnail i at (x, y) from thumbnail j: the larger of the two
+  // axis gaps; negative when they overlap.
+  const sep = (i, j, x, y) => Math.max(
+    Math.abs(x - X[j]) - (Wt[i] + Wt[j]) / 2,
+    Math.abs(y - Y[j]) - (Ht[i] + Ht[j]) / 2
+  );
+  // Some pair overlaps (only possible if overlap removal hit its limit). While
+  // false, every overlap term is exactly 0.
+  let anyOv = false;
+  for (let i = 0; i < n && !anyOv; i++) for (let j = i + 1; j < n; j++) {
+    if (sep(i, j, X[i], Y[i]) < 0) { anyOv = true; break; }
+  }
+  // Score terms involving thumbnail i, with i at (x, y); the same sum, in the
+  // same order, as the full score (the skipped terms are exactly 0). full:
+  // include the overlap terms.
+  const local = (i, x, y, full) => {
+    const dx = x - OX[i], dy = y - OY[i];
+    let v = kDisp * Math.sqrt(dx * dx + dy * dy);
+    if (rows && !full) {
+      for (let j = 0, k = i * n; j < n; j++, k++) {
+        const wt = RW[k];
+        if (wt) v += kRel * dirPen(wt, RUX[k], RUY[k], X[j] - x, Y[j] - y);
+      }
+    } else if (relOn || full) {
+      const px = X[i], py = Y[i];
+      X[i] = x; Y[i] = y;
+      for (let j = 0; j < n; j++) if (j !== i) {
+        if (relOn) v += kRel * rel.pen(X, Y, i, j);
+        if (full) v += kOv * overlapArea(X, Y, Wt, Ht, i, j);
+      }
+      X[i] = px; Y[i] = py;
+    }
+    return v;
   };
-  const avg = Wt.reduce((q, w, i) => q + Math.sqrt(w * Ht[i]), 0) / n;
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [.7071, .7071], [.7071, -.7071], [-.7071, .7071], [-.7071, -.7071]];
+  // Near list of thumbnail i: the neighbors a move of up to step0 could bring
+  // closer than allowed, nearest first, with their current separation (nearS)
+  // and the separation a move must keep (nearT). A neighbor whose separation is
+  // at least gap + step stays farther than the gap after any move of that step,
+  // so it can neither block the move nor overlap.
+  const REACH = 1e-3; // px of safety margin on that reach
+  const nearJ = new Int32Array(n);
+  const nearS = new Float64Array(n), nearT = new Float64Array(n);
+  let nearN = 0;
+  const findNear = i => {
+    nearN = 0;
+    const lim = g + step0 + REACH;
+    for (let j = 0; j < n; j++) if (j !== i) {
+      const s = sep(i, j, X[i], Y[i]);
+      if (s >= lim) continue;
+      let k = nearN++;
+      for (; k > 0 && nearS[k - 1] > s; k--) {
+        nearJ[k] = nearJ[k - 1];
+        nearS[k] = nearS[k - 1];
+        nearT[k] = nearT[k - 1];
+      }
+      nearJ[k] = j; nearS[k] = s; nearT[k] = Math.min(g, s) - 1e-6;
+    }
+  };
+  const DX = [1, -1, 0, 0, .7071, .7071, -.7071, -.7071];
+  const DY = [0, 0, 1, -1, .7071, -.7071, .7071, -.7071];
+  // idleAt[i]: value of `moved` when thumbnail i was last scanned without
+  // moving. While nothing has moved since, a new scan would find nothing again.
+  const idleAt = new Int32Array(n).fill(-1);
   let moved = 0, gain = 0;
   for (let pass = 0; pass < INTERNAL.POLISH_PASSES; pass++) {
     let improved = false;
-    for (let i = 0; i < n; i++) for (let step = avg * INTERNAL.POLISH_FIRST_STEP; step >= INTERNAL.POLISH_MIN_STEP; step /= 2) for (const [ux, uy] of dirs) {
-      const nx = X[i] + ux * step, ny = Y[i] + uy * step;
-      if (!fits(i, nx, ny)) continue;
-      const d = sc.delta(X, Y, i, nx, ny);
-      if (d < -1e-9) { X[i] = nx; Y[i] = ny; gain -= d; moved++; improved = true; }
+    for (let i = 0; i < n; i++) {
+      if (idleAt[i] === moved) continue;
+      const moved0 = moved, hw = Wt[i] / 2, hh = Ht[i] / 2;
+      let before = 0, haveBefore = false;
+      findNear(i);
+      for (let step = step0; step >= INTERNAL.POLISH_MIN_STEP; step /= 2) {
+        const lim = g + step + REACH;
+        for (let d = 0; d < 8; d++) {
+          const nx = X[i] + DX[d] * step, ny = Y[i] + DY[d] * step;
+          if (nx - hw < ax1 || nx + hw > ax2) continue;
+          if (ny - hh < ay1 || ny + hh > ay2) continue;
+          let fits = true, minSep = Infinity;
+          for (let k = 0; k < nearN && nearS[k] < lim; k++) {
+            const s = sep(i, nearJ[k], nx, ny);
+            if (s < nearT[k]) { fits = false; break; }
+            if (s < minSep) minSep = s;
+          }
+          if (!fits) continue;
+          if (!haveBefore) {
+            before = local(i, X[i], Y[i], anyOv);
+            haveBefore = true;
+          }
+          const after = local(i, nx, ny, anyOv || minSep < 0);
+          const dl = after - before;
+          if (dl < -1e-9) {
+            X[i] = nx; Y[i] = ny; gain -= dl; moved++; improved = true;
+            before = after;
+            if (minSep < 0) anyOv = true;
+            findNear(i);
+          }
+        }
+      }
+      if (moved === moved0) idleAt[i] = moved;
     }
     if (!improved) break;
   }
-  return { T: T.map((t, i) => ({ ...t, x: X[i] - Wt[i] / 2, y: Y[i] - Ht[i] / 2 })), moved, gain };
+  return {
+    T: T.map((t, i) => ({ ...t, x: X[i] - Wt[i] / 2, y: Y[i] - Ht[i] / 2 })),
+    moved,
+    gain
+  };
 }
 
-// Optimizer safeguard: build the push-apart and ordered-rows layouts it started from (with
-// their own settings, S.pushStart / S.rowsStart), finish them with the same post-steps, and
-// keep whatever scores best. A candidate is polished if either the optimizer or that
-// algorithm polishes, and polishing only ever lowers a score, so the optimizer is never worse
-// than those algorithms. The grid is not a candidate: its uneven scaling is not something
-// the optimizer may produce.
-function optimizerSafeguard(T, ws, S, A, info) {
+// Optimizer safeguard: build the push-apart and ordered-rows layouts it started
+// from (with their own settings, S.pushStart / S.rowsStart), finish them with
+// the same post-steps, and keep whatever scores best. A candidate is polished
+// if either the optimizer or that algorithm polishes, and polishing only ever
+// lowers a score, so the optimizer is never worse than those algorithms. The
+// grid is not a candidate: its uneven scaling is not something the optimizer
+// may produce.
+//
+// Where the search built these layouts as starting points, they come from it
+// (`shared`), identical to building them here. A candidate's polish is skipped
+// when even its best possible polished score could not win (polishLowerBound):
+// the same outcome as polishing it and losing.
+function optimizerSafeguard(T, ws, S, A, info, shared) {
   const K = Math.max(1, Math.round(S.restarts || 1));
   const used = S.startFrom === "mixed" ? INTERNAL.START_KINDS.slice(0, Math.min(K, 4)) : [S.startFrom || "push"];
   let best = T, bestScore = scoreLayout(T, ws, S, A).total, from = null;
   for (const k of used) {
     if (k !== "push" && k !== "rows") continue;
-    let C = k === "rows" ? layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A)
-      : layoutNatural(ws, { ...S, iterations: S.pushStart.iterations, step: S.pushStart.step, aspect: S.pushStart.aspect }, A, {});
+    let C;
+    if (k === "rows") {
+      C = shared.rows || layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A);
+    } else if (shared.push) { // the push-apart algorithm's remaining steps
+      const p = shared.push;
+      enforceGap(p.items, p.R, A, S);
+      C = finalize(p.items, p.R, A, S);
+    } else {
+      const P = S.pushStart;
+      C = layoutNatural(
+        ws,
+        { ...S, iterations: P.iterations, step: P.step, aspect: P.aspect },
+        A,
+        {}
+      );
+    }
     if (!S.centered) C = placeNearReal(C, ws, A);
-    if (S.polish || (k === "push" && S.pushStart.polish)) C = polishLayout(C, ws, S, A).T;
+    if (S.polish || (k === "push" && S.pushStart.polish)) {
+      // cannot win, polished or not
+      if (polishLowerBound(C, ws, S, A) >= bestScore + 1e-9) continue;
+      C = polishLayout(C, ws, S, A).T;
+    }
     const sc = scoreLayout(C, ws, S, A).total;
     if (sc < bestScore - 1e-12) { best = C; bestScore = sc; from = k; }
   }
   info.keptStart = from; // null: the search's own result was best
   return best;
+}
+
+// A score that polishing C can never get below. The polish doesn't change
+// sizes, so the size terms stay as they are; the relations and overlap terms
+// are at least 0 (up to rounding, far below the caller's 1e-9 margin); and the
+// movement term is at least what pairs of thumbnails that would be too close at
+// their real positions force on them:
+// * The polish never brings two thumbnails closer than min(gap, their
+//   separation in C), less 1e-6 px per move (its tolerance); `slack` covers the
+//   most moves it can make.
+// * For a pair to stay that far apart, the distances of the two from their real
+//   positions must add up to at least m (the shortfall along the axis that is
+//   cheaper to fix).
+// * Over pairs that share no thumbnail these add up; they are picked largest m
+//   first.
+function polishLowerBound(C, ws, S, A) {
+  const sc = makeScorer(C, ws, S, A), n = sc.n, OX = sc.OX, OY = sc.OY;
+  const X = C.map(t => t.x + t.w / 2), Y = C.map(t => t.y + t.h / 2);
+  const p = sc.parts(X, Y);
+  const avg = C.reduce((q, t) => q + Math.sqrt(t.w * t.h), 0) / Math.max(1, n);
+  let steps = 0;
+  const minStep = INTERNAL.POLISH_MIN_STEP;
+  for (let s = avg * INTERNAL.POLISH_FIRST_STEP; s >= minStep; s /= 2) steps++;
+  const slack = 1e-6 * INTERNAL.POLISH_PASSES * n * steps * 8 + 1e-3;
+  const pairs = [];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const a = (C[i].w + C[j].w) / 2, b = (C[i].h + C[j].h) / 2;
+    const s0 = Math.max(Math.abs(X[i] - X[j]) - a, Math.abs(Y[i] - Y[j]) - b);
+    const r = Math.min(S.spacing, s0) - slack;
+    const m = Math.min(
+      a + r - Math.abs(OX[i] - OX[j]),
+      b + r - Math.abs(OY[i] - OY[j])
+    );
+    if (m > 0) pairs.push([m, i, j]);
+  }
+  pairs.sort((u, v) => v[0] - u[0] || u[1] - v[1] || u[2] - v[2]);
+  const taken = new Uint8Array(n);
+  let move = 0;
+  for (const [m, i, j] of pairs) {
+    if (taken[i] || taken[j]) continue;
+    taken[i] = taken[j] = 1; move += m;
+  }
+  return p.size + p.sizes + sc.kDisp * move;
 }
 
 // Optional: let each thumbnail (smallest first) grow into free space, up to S.growLimit.
@@ -770,13 +968,14 @@ function compute(windows, monitor, algorithm, S) {
   const ws = windows.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h }));
   const A = workArea(monitor, S.margin), info = {};
   if (!ws.length) return { targets: [], score: null, info };
-  let T = algo.run(ws, S, A, info);
+  const shared = {}; // what the optimizer hands on to its safeguard
+  let T = algo.run(ws, S, A, info, shared);
   if (algo.uniformScale && !S.centered) T = placeNearReal(T, ws, A);
   if (algo.polishable && S.polish) {
     const r = polishLayout(T, ws, S, A);
     T = r.T; info.polishMoves = r.moved; info.polishGain = r.gain;
   }
-  if (algorithm === "anneal") T = optimizerSafeguard(T, ws, S, A, info);
+  if (algorithm === "anneal") T = optimizerSafeguard(T, ws, S, A, info, shared);
   if (algo.uniformScale && S.fill) T = fillGaps(T, S, A);
   return {
     targets: T.map(t => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h, scale: t.w / t.ow })),

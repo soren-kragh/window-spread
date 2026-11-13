@@ -84,9 +84,11 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
 2. **Placement:** unless `centered`, the arrangement is moved as a whole toward
    the real windows, as far as the work area allows (5.2).
 3. **Polish** (anneal, natural): greedy small moves into free space that lower
-   the score (5.2).
+   the score (5.2; how it is kept cheap: 5.18).
 4. **Safeguard** (anneal): the push-apart and rows layouts the optimizer started
-   from are finished the same way, and the best-scoring layout wins (5.7).
+   from are finished the same way, and the best-scoring layout wins (5.7). It
+   reuses those layouts from the search, and skips polishing a candidate that
+   provably can't win (5.18).
 5. **Fill gaps** (optional): thumbnails grow into free space.
 6. **Score.**
 
@@ -353,7 +355,8 @@ It slightly hurt small desktops in the first experiment, so the share ramps from
 About 400 ns per optimizer move (8 windows) after caching pair values (overlap
 and relation per pair, updated only on accepted moves) and multiplicative
 cooling (1.4× faster, same quality). Profile: 57% the move itself (pair checks),
-22% rescoring, 8% random numbers; no single waste left. Effort vs quality: up to
+22% rescoring, 8% random numbers; no single waste left (for the polish, see
+5.18). Effort vs quality: up to
 about 6 windows quality saturates near 15k moves; from 8 windows up it keeps
 improving to 60k (at 24 windows, 30k is 4.5% worse than 60k). Default effort is
 10k (user's choice), with the cache making recomputation rare.
@@ -439,6 +442,55 @@ bullets: Cinnamon's dialog sets plain-text tooltips, which GTK wraps at 70
 characters without indenting the continuation lines, so wrapped bullets look
 ragged. Cinnamon's dialog has no tooltips per choice.
 
+### 5.18 Polish: same result, a fraction of the work
+Profiled (Node after warm-up, 2560×1440, random desktops, optimizer at 10k
+moves): from about 12 windows up, the polish cost more than the search. At 30
+windows the optimizer's three polishes (its result, and the push-apart and
+ordered-rows candidates in the safeguard) took 64% of its 40 ms, and push apart
+was 95% polish. Each pass tried 64 moves per thumbnail and rescored every one
+against all other thumbnails, recomputing the unchanged "before" value each
+time.
+
+Changes, all exact (identical layouts, scores and diagnostics, bit for bit):
+
+* Polish: the "before" value is computed once per position; only neighbors
+  within reach of the step are checked for gap and overlap; the overlap terms
+  are skipped while nothing overlaps (they are exactly 0); a thumbnail whose
+  scan found nothing is not scanned again until something else moves.
+* Direction relations are kept as row-wise typed arrays with one formula
+  (`dirPen`), read directly by the polish and by the search moves.
+* Safeguard: it reuses the push-apart and ordered-rows layouts the search built
+  as starting points, and skips a candidate's polish when a lower bound on its
+  polished score (`polishLowerBound`: the size terms, which polishing can't
+  change, plus the movement forced by pairs that would be too close at their
+  real positions) can't beat the best.
+
+Evidence: compared with the previous engine on 5842 results (all algorithms;
+0-45 windows; random, oversized, tiny, stacked and grid-aligned desktops; three
+monitor shapes; 19 setting sets and 17 optimizer variants, including leftover
+overlaps and the order method): no difference. Every new code path was taken
+(overlap path, bound skips, reused layouts). Time in ms, old → new:
+
+| windows | 4 | 8 | 12 | 20 | 30 |
+|---|---|---|---|---|---|
+| optimizer | 4.1 → 3.7 | 7.4 → 5.8 | 8.0 → 4.9 | 17.3 → 8.3 | 34.3 → 14.6 |
+| push apart | 0.13 → 0.05 | 0.47 → 0.13 | 1.37 → 0.33 | 4.2 → 0.9 | 6.8 → 1.6 |
+
+The search moves are now about 70% of the optimizer's time at 30 windows.
+Confirmed in Cinnamon on the target system (section 6.2): the same scores as the
+previous engine for the same windows, and faster.
+
+What the polish gains (share of the score before it): the search result
+0.3-3%, push apart 3-9%; the safeguard's polished candidates win on about half
+of all desktops at 4 windows, almost never at 8-20, and occasionally at 30
+(rows). So the polish is worth keeping; it was just done expensively.
+
+Rejected (measured in two independent studies): heuristics that skip
+directions going uphill, stop on small gains, cap the passes, or skip
+candidates by a margin. They would make the polish another 1.5-2× faster but
+change results now and then (push apart up to 8% worse on single desktops); not
+worth it after the exact changes (user's decision).
+
 
 ## 6. Verified facts about Cinnamon 6.0.5
 
@@ -518,16 +570,19 @@ Via the diagnostics log:
   decorations are added to margin and gap automatically, the Show all windows
   defaults are small (16 / 8).
 * Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
-* First computation of a 6-window workspace: about 22 ms; cache hits: about 0.2
-  ms.
+* First computation, optimizer (Ryzen 9 5900X, 2026-11-13): 2 windows 4-16 ms,
+  4 windows 5-11 ms, 8 windows 8-12 ms (before 5.18: 4 windows 12-15 ms, 8
+  windows 13-17 ms). The spread within each comes from Cinnamon's JavaScript
+  engine warming up after a restart. Earlier, before the engine's speed-ups:
+  about 22 ms for 6 windows. Cache hits: about 0.2 ms.
 
 
 ## 7. Testing
 
 Run everything with `node tests/run-all.js` (Mint: `sudo apt install nodejs`).
-About 80 checks, a few seconds. Against several Cinnamon versions at once: `node
-tests/run-versions.js` (default: the latest of each series from 6.0 to 6.8) or
-`node tests/run-versions.js 6.8.1 6.8.2` for specific ones.
+About 140 checks, a few seconds. Against several Cinnamon versions at once:
+`node tests/run-versions.js` (default: the latest of each series from 6.0 to
+6.8) or `node tests/run-versions.js 6.8.1 6.8.2` for specific ones.
 
 * `tests/engine.test.js`: the guarantees for all algorithms, uniform scale,
   monitors elsewhere, the optimizer safeguard, the cache, rebuilding from the
@@ -585,7 +640,12 @@ The target system's checks are in README's "Checking that it works".
   with one gap, side-by-side thumbnails are 22 px further apart than necessary.
 * **Time budget** for the optimizer (stop after N ms instead of a fixed effort),
   if first-time computation ever feels slow. Cinnamon's JavaScript runs on the
-  compositor's thread, so long computations freeze the desktop briefly.
+  compositor's thread, so long computations freeze the desktop briefly. A
+  wall-clock stop would break determinism and cut the cooling schedule short;
+  the alternative is to set the number of moves from the window count. A move
+  costs a fixed part plus a part per window (Node: about 0.22 + 0.039 × n µs),
+  so moves = effort × (8 + 5.6) / (n + 5.6) would keep the search's time about
+  the same as at 8 windows today. Not done; measure the ratio in Cinnamon first.
 * **Stability between invocations** (keep thumbnails where they were when only
   one window changed): would need the previous layout as an extra starting
   point; not started.
