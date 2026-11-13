@@ -107,7 +107,7 @@
       "type": "section",
       "title": "Optimizer settings",
       "keys": [
-        "anneal-iterations",
+        "anneal-effort",
         "anneal-restarts",
         "anneal-checkpoint",
         "anneal-temp",
@@ -172,8 +172,8 @@
   "use-cache": {
     "type": "switch",
     "default": true,
-    "description": "Reuse the previous layout when nothing has changed",
-    "tooltip": "Keeps views quick by reusing the previous arrangement when nothing has changed; the result is the same either way. Leave this on. Switching it off is only useful for troubleshooting."
+    "description": "Layout caching",
+    "tooltip": "Reuses the previous arrangement of a workspace when its windows and the settings haven't changed since, which keeps the views quick; the result is the same either way. Focusing other windows, changing the stacking order, or minimizing and restoring windows don't count as changes. Leave this on; switching it off is only useful for troubleshooting."
   },
   "restore-defaults": {
     "type": "button",
@@ -297,14 +297,15 @@
     "tooltip": "How much more nearby windows matter than distant ones.",
     "dependency": "rel-mode=direction"
   },
-  "anneal-iterations": {
+  "anneal-effort": {
     "type": "spinbutton",
-    "default": 10000,
-    "min": 1000,
-    "max": 200000,
-    "step": 1000,
-    "description": "Effort (moves)",
-    "tooltip": "Total random moves, shared by all parallel starts. More is better but slower."
+    "default": 10,
+    "min": 1,
+    "max": 200,
+    "step": 1,
+    "units": "thousand moves",
+    "description": "Effort",
+    "tooltip": "Number of moves the optimizer tries, shared by all parallel starts. More gives better layouts but takes longer, and each move takes longer the more windows there are. If opening the views gets choppy, lower this."
   },
   "anneal-restarts": {
     "type": "spinbutton",

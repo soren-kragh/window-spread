@@ -73,17 +73,19 @@ const EXPO_REARRANGE_TIME_ON = 100; // ms, REARRANGE_TIME_ON
 const EXPO_ICON_OFFSET = -5;        // ICON_OFFSET: on-screen offset of the app icon badge from a window's corner
 const EXPO_ICON_SCALE = 0.25;       // app icon scale factor in overviewModeOn ("0.25/...")
 
-// Settings dialog key -> engine settings group and key. The engine's DEFAULTS are the
-// reference for default values; settings-schema.json is generated from them. Engine settings
-// not listed here keep their DEFAULTS value (e.g. scoring.wSizes, "Keep sizes": it rarely
-// changes a layout on real desktops, so it isn't offered in the settings window).
+// Settings dialog key -> engine settings group and key, and optionally a unit: the engine
+// value is the dialog value times the unit (the effort is shown in thousands of moves).
+// The engine's DEFAULTS are the reference for default values; settings-schema.json is
+// generated from them. Engine settings not listed here keep their DEFAULTS value (e.g.
+// scoring.wSizes, "Keep sizes": it rarely changes a layout on real desktops, so it isn't
+// offered in the settings window).
 const SETTINGS_MAP = [
   ["margin", "common", "margin"], ["spacing", "common", "spacing"], ["fidelity", "common", "fidelity"],
   ["max-scale", "common", "maxScale"], ["centered", "common", "centered"], ["fill", "common", "fill"],
   ["grow-limit", "common", "growLimit"],
   ["w-scale", "scoring", "wScale"], ["w-disp", "scoring", "wDisp"],
   ["w-rel", "scoring", "wRel"], ["rel-mode", "scoring", "relMode"], ["rel-near", "scoring", "relNear"],
-  ["anneal-iterations", "anneal", "iterations"], ["anneal-restarts", "anneal", "restarts"],
+  ["anneal-effort", "anneal", "iterations", 1000], ["anneal-restarts", "anneal", "restarts"],
   ["anneal-checkpoint", "anneal", "checkpoint"], ["anneal-temp", "anneal", "temp"],
   ["anneal-start-from", "anneal", "startFrom"], ["anneal-seed", "anneal", "seed"],
   ["anneal-bailout", "anneal", "bailout"], ["anneal-polish", "anneal", "polish"],
@@ -113,7 +115,10 @@ function logError(msg, e) { global.logError(LOG_PREFIX + msg + (e ? ": " + e + (
 // `overrides` on top (Expo's own margin and gap).
 function readConfig(algorithmKey, overrides) {
   const groups = { common: {}, scoring: {}, anneal: {}, natural: {}, rows: {}, grid: {} };
-  for (const [key, group, engineKey] of SETTINGS_MAP) groups[group][engineKey] = settings.getValue(key);
+  for (const [key, group, engineKey, unit] of SETTINGS_MAP) {
+    const v = settings.getValue(key);
+    groups[group][engineKey] = unit ? v * unit : v;
+  }
   groups.common.maxScale = Math.min(1, groups.common.maxScale); // Cinnamon caps thumbnails at real size
   // The optimizer starts from the push-apart and ordered-rows layouts with their own settings.
   groups.anneal.pushStart = { iterations: groups.natural.iterations, step: groups.natural.step,
@@ -341,9 +346,10 @@ function expoOverviewModeOn(thumb) {
 // Warn if settings-schema.json defaults and the engine's DEFAULTS have drifted apart.
 function checkDefaults() {
   const data = settings.settingsData || {};
-  for (const [key, group, engineKey] of SETTINGS_MAP.concat(EXPO_SETTINGS_MAP)) {
+  for (const [key, group, engineKey, unit] of SETTINGS_MAP.concat(EXPO_SETTINGS_MAP)) {
     const entry = data[key];
-    if (entry && "default" in entry && entry.default !== SpreadLayout.DEFAULTS[group][engineKey])
+    const def = entry && "default" in entry ? (unit ? entry.default * unit : entry.default) : undefined;
+    if (def !== undefined && def !== SpreadLayout.DEFAULTS[group][engineKey])
       log(`warning: settings-schema.json default for "${key}" (${entry.default}) differs from the engine's ` +
         `DEFAULTS.${group}.${engineKey} (${SpreadLayout.DEFAULTS[group][engineKey]})`);
   }

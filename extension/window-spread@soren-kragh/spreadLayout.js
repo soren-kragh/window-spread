@@ -68,8 +68,8 @@
 
    Not done here (left to the caller)
      - Animation, drawing, input handling, multi-monitor assignment.
-     - A time budget: effort is a fixed iteration count. For Cinnamon, consider scaling
-       `anneal.iterations` with the window count or measuring time (see compute()).
+     - A time budget: effort is a fixed number of moves (`anneal.iterations`), set
+       by the user; see DEVELOPMENT.md 5.19.
    ========================================================================== */
 // All engine code lives inside this factory function, so that it can also be handed to
 // Web Workers as text (createSpreadLayout.toString()) without keeping a second copy.

@@ -30,7 +30,12 @@ const algoTooltip=(intro,gridNote)=>[
 const schema={
   'algorithm':{type:'combobox',default:'anneal',description:'Layout algorithm',options:{'Optimizer':'anneal','Push apart':'natural','Ordered rows':'rows','Equal grid':'grid'},
     tooltip:algoTooltip('How thumbnails are arranged.','')},
-  'use-cache':{type:'switch',default:true,description:'Reuse the previous layout when nothing has changed',tooltip:'Keeps views quick by reusing the previous arrangement when nothing has changed; the result is the same either way. Leave this on. Switching it off is only useful for troubleshooting.'},
+  'use-cache':{type:'switch',default:true,description:'Layout caching',
+    tooltip:'Reuses the previous arrangement of a workspace when its windows and the '+
+      'settings haven\'t changed since, which keeps the views quick; the result is the '+
+      'same either way. Focusing other windows, changing the stacking order, or '+
+      'minimizing and restoring windows don\'t count as changes. Leave this on; '+
+      'switching it off is only useful for troubleshooting.'},
   'restore-defaults':{type:'button',description:'Restore all settings to their defaults',callback:'restoreDefaults',
     tooltip:'Sets every setting on this page back to its default value.'},
   'debug-log':{type:'switch',default:false,description:'Write diagnostics to the log',tooltip:'Writes information for troubleshooting to the log. View it in Looking Glass (Alt+F2, then lg) under Log.'},
@@ -49,7 +54,12 @@ const schema={
   'rel-mode':combo('scoring','relMode','Relations method',{'Order (left/right, above/below)':'order','Direction (angles)':'direction'},'Order only cares whether windows swap sides; Direction compares the angles between windows and is stricter.'),
   'rel-near':scale('scoring','relNear','Neighbor focus',0,1,0.05,'How much more nearby windows matter than distant ones.',{dependency:'rel-mode=direction'}),
 
-  'anneal-iterations':spin('anneal','iterations','Effort (moves)',1000,200000,1000,'','Total random moves, shared by all parallel starts. More is better but slower.'),
+  // Shown in thousands of moves; the extension multiplies by 1000 (its SETTINGS_MAP).
+  'anneal-effort':{...spin('anneal','iterations','Effort',1,200,1,'thousand moves',
+    'Number of moves the optimizer tries, shared by all parallel starts. More gives '+
+    'better layouts but takes longer, and each move takes longer the more windows '+
+    'there are. If opening the views gets choppy, lower this.'),
+    default:D.anneal.iterations/1000},
   'anneal-restarts':spin('anneal','restarts','Parallel starts',1,16,1,'','Independent searches racing each other.'),
   'anneal-checkpoint':scale('anneal','checkpoint','First checkpoint',0.05,0.95,0.05,'How far through the search the first weak starts are dropped.'),
   'anneal-temp':scale('anneal','temp','Temperature',0.005,0.5,0.005,'Willingness to accept worse arrangements early in the search.'),
@@ -103,7 +113,7 @@ const layout={type:'layout',pages:['page-general','page-layout','page-expo','pag
   'sec-scale-enable':{type:'section',title:'Show all windows (Scale)',keys:['scale-enabled']},
   'sec-layout':{type:'section',title:'Arrangement',dependency:'scale-enabled',keys:['algorithm','margin','spacing','fidelity','max-scale','centered','fill','grow-limit']},
   'sec-scoring':{type:'section',title:'What makes a good layout',keys:['w-scale','w-disp','w-rel','rel-mode','rel-near']},
-  'sec-optimizer':{type:'section',title:'Optimizer settings',keys:['anneal-iterations','anneal-restarts','anneal-checkpoint','anneal-temp','anneal-start-from','anneal-seed','anneal-bailout','anneal-polish']},
+  'sec-optimizer':{type:'section',title:'Optimizer settings',keys:['anneal-effort','anneal-restarts','anneal-checkpoint','anneal-temp','anneal-start-from','anneal-seed','anneal-bailout','anneal-polish']},
   'sec-natural':{type:'section',title:'Push-apart (also a starting point for the optimizer)',keys:['natural-iterations','natural-step','natural-aspect','natural-polish']},
   'sec-rows':{type:'section',title:'Ordered rows (also a starting point for the optimizer)',keys:['rows-count']},
   'sec-expo-enable':{type:'section',title:'Show all workspaces (Expo)',keys:['expo-enabled']},

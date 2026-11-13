@@ -356,10 +356,15 @@ About 400 ns per optimizer move (8 windows) after caching pair values (overlap
 and relation per pair, updated only on accepted moves) and multiplicative
 cooling (1.4× faster, same quality). Profile: 57% the move itself (pair checks),
 22% rescoring, 8% random numbers; no single waste left (for the polish, see
-5.18). Effort vs quality: up to
-about 6 windows quality saturates near 15k moves; from 8 windows up it keeps
-improving to 60k (at 24 windows, 30k is 4.5% worse than 60k). Default effort is
-10k (user's choice), with the cache making recomputation rare.
+5.18). Effort vs quality: up to about 6 windows quality saturates near 15k
+moves; from 8 windows up it keeps improving to 60k (at 24 windows, 30k is 4.5%
+worse than 60k). Default effort is 10k (user's choice), with the cache making
+recomputation rare. Rechecked after 5.18 (40 random desktops per window count,
+2560×1440, against 10k): 20k / 50k / 100k improve the mean score by at most
+1.3% / 2.7% / 3.1%, and make 3-48% of desktops (most at 8-12 windows) more than
+3% better, a few by 12-22%; each doubling helps less and doubles the time. 10k
+stays the default (user's decision); users with few windows or a fast PC can
+raise it.
 
 ### 5.12 Cache
 Last layout per slot (monitor and workspace), exact match on window ids and
@@ -491,6 +496,19 @@ candidates by a margin. They would make the polish another 1.5-2× faster but
 change results now and then (push apart up to 8% worse on single desktops); not
 worth it after the exact changes (user's decision).
 
+### 5.19 No time budget; the user sets the effort
+Considered: limiting the optimizer's time. A wall-clock stop would break
+determinism and cut the cooling schedule short. Setting the number of moves from
+the window count instead would work: a move costs a fixed part plus a part per
+window (Node: about 0.22 + 0.039 × n µs), so moves = effort × (8 + 5.6) /
+(n + 5.6) keeps the search's time about that of 8 windows. Rejected (user's
+decision): the user knows their PC and how many windows they typically have,
+and sets the effort. The settings window shows it in thousands of moves
+(`anneal-effort`; the extension multiplies by 1000, the unit in its
+SETTINGS_MAP), and its tooltip says to lower it if opening the views gets
+choppy. The new key name means an old setting stored in moves is not read as
+thousands; it falls back to the default.
+
 
 ## 6. Verified facts about Cinnamon 6.0.5
 
@@ -572,9 +590,12 @@ Via the diagnostics log:
 * Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
 * First computation, optimizer (Ryzen 9 5900X, 2026-11-13): 2 windows 4-16 ms,
   4 windows 5-11 ms, 8 windows 8-12 ms (before 5.18: 4 windows 12-15 ms, 8
-  windows 13-17 ms). The spread within each comes from Cinnamon's JavaScript
-  engine warming up after a restart. Earlier, before the engine's speed-ups:
-  about 22 ms for 6 windows. Cache hits: about 0.2 ms.
+  windows 13-17 ms); 21 windows 22-24 ms. Earlier, before the engine's
+  speed-ups: about 22 ms for 6 windows. Cache hits: about 0.2 ms.
+* The first layout computed when a view opens takes 5-7 ms longer than the
+  same layout computed later in that opening, whichever workspace it is (tested
+  by making another workspace the only one to recompute). A cost in Cinnamon
+  between openings, not in the engine; not pursued further (user's decision).
 
 
 ## 7. Testing
@@ -638,14 +659,6 @@ The target system's checks are in README's "Checking that it works".
 * **Separate horizontal and vertical gaps** in the engine. Thumbnails need 50 px
   of decorations vertically but only 28 px horizontally on the target system;
   with one gap, side-by-side thumbnails are 22 px further apart than necessary.
-* **Time budget** for the optimizer (stop after N ms instead of a fixed effort),
-  if first-time computation ever feels slow. Cinnamon's JavaScript runs on the
-  compositor's thread, so long computations freeze the desktop briefly. A
-  wall-clock stop would break determinism and cut the cooling schedule short;
-  the alternative is to set the number of moves from the window count. A move
-  costs a fixed part plus a part per window (Node: about 0.22 + 0.039 × n µs),
-  so moves = effort × (8 + 5.6) / (n + 5.6) would keep the search's time about
-  the same as at 8 windows today. Not done; measure the ratio in Cinnamon first.
 * **Stability between invocations** (keep thumbnails where they were when only
   one window changed): would need the previous layout as an extra starting
   point; not started.

@@ -145,14 +145,20 @@ their defaults**, on the General tab, sets everything back to them.
 
 Two settings are specific to the extension:
 
-* **Reuse the previous layout when nothing has changed** (on by default): skips
-  recomputing when the windows and settings are unchanged since the last time on
-  that monitor and workspace. Focusing other windows, changing the stacking
-  order, or minimizing and restoring windows don't count as changes.
+* **Layout caching** (on by default): skips recomputing when the windows and
+  settings are unchanged since the last time on that monitor and workspace.
+  Focusing other windows, changing the stacking order, or minimizing and
+  restoring windows don't count as changes.
 * **Write diagnostics to the log** (off by default): see the next section.
 
 Cinnamon never shows thumbnails larger than the real window, so the largest
 thumbnail scale is limited to 1 here (the lab allows more).
+
+The optimizer's **Effort** (Optimizer tab, in thousands of moves) sets how long
+it searches. The time grows with the number of windows and depends on your PC;
+the diagnostics log shows it. A layout is only computed when something has
+changed, but if opening the views gets choppy, lower the effort. With few
+windows, a lower effort loses little.
 
 
 ## Checking that it works
@@ -247,10 +253,3 @@ log if they don't, and `node tests/run-all.js` reports it too.
 Cinnamon keeps the values you've set in the settings window, even when defaults
 change. After updating the extension with new defaults, press **Restore all
 settings to their defaults** (General tab) to apply them.
-
-
-## Not covered yet
-
-* **Time budget:** the optimizer's effort is a fixed number of moves (10,000 by
-  default). With the cache, the layout is only computed when something has
-  changed; the log shows how long that takes on your machine.

@@ -211,7 +211,7 @@ async function runChecks() {
   const S = SL.settings('anneal', { margin: d('margin'), spacing: d('spacing') + Math.max(CHROME.top + CHROME.bottom, CHROME.left + CHROME.right),
     fidelity: d('fidelity'), maxScale: Math.min(1, d('max-scale')), centered: d('centered'), fill: d('fill'), growLimit: d('grow-limit'),
     wScale: d('w-scale'), wDisp: d('w-disp'), wRel: d('w-rel'), relMode: d('rel-mode'), relNear: d('rel-near'),
-    iterations: d('anneal-iterations'), restarts: d('anneal-restarts'), checkpoint: d('anneal-checkpoint'), temp: d('anneal-temp'),
+    iterations: d('anneal-effort') * 1000, restarts: d('anneal-restarts'), checkpoint: d('anneal-checkpoint'), temp: d('anneal-temp'),
     startFrom: d('anneal-start-from'), seed: d('anneal-seed'), bailout: d('anneal-bailout'), polish: d('anneal-polish'),
     pushStart: { iterations: d('natural-iterations'), step: d('natural-step'), aspect: d('natural-aspect'), polish: d('natural-polish') },
     rowsStart: { rows: d('rows-count') } });

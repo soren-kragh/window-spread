@@ -17,9 +17,9 @@ async function run() {
   ok('settings-schema.json is exactly what tools/build-schema.js generates from the engine\'s DEFAULTS',
     require(path.join(__dirname, '..', 'tools', 'build-schema.js')).text === fileText,
     'if not: run node tools/build-schema.js');
-  const map = []; const re = /\["([a-z-]+)", "(common|scoring|anneal|natural|rows|grid)", "(\w+)"\]/g; let m;
-  while ((m = re.exec(extSrc))) map.push({ key: m[1], group: m[2], engineKey: m[3] });
-  ok('every setting the extension maps has the engine\'s default', map.length > 0 && map.every(e => schema[e.key] && schema[e.key].default === SL.DEFAULTS[e.group][e.engineKey]), map.length + ' settings');
+  const map = []; const re = /\["([a-z-]+)", "(common|scoring|anneal|natural|rows|grid)", "(\w+)"(?:, (\d+))?\]/g; let m;
+  while ((m = re.exec(extSrc))) map.push({ key: m[1], group: m[2], engineKey: m[3], unit: m[4] ? +m[4] : 0 });
+  ok('every setting the extension maps has the engine\'s default (times its unit)', map.length > 0 && map.every(e => schema[e.key] && (e.unit ? schema[e.key].default * e.unit : schema[e.key].default) === SL.DEFAULTS[e.group][e.engineKey]), map.length + ' settings');
   const read = []; const re2 = /(?:getValue|readConfig)\("([a-z-]+)"/g; // direct reads, and the algorithm keys passed to readConfig()
   while ((m = re2.exec(extSrc))) read.push(m[1]);
   const settingKeys = Object.keys(schema).filter(k => 'default' in schema[k]);
