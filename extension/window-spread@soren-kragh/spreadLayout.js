@@ -116,7 +116,7 @@ const DEFAULTS = {
     // start from. Filled in by settings() from DEFAULTS.natural and DEFAULTS.rows; pass the same
     // values as those algorithms use, so the optimizer is guaranteed to do at least as well.
   },
-  // Push apart, then scale ("natural").
+  // Push apart ("natural").
   natural: {
     iterations: 1000,  // maximum push-apart passes
     step: 0.3,         // push strength per pass (fraction of the overlap)
@@ -446,7 +446,7 @@ function layoutGrid(ws, S, A) {
   });
 }
 
-// Push apart, then scale: start at the real positions, push overlapping pairs apart,
+// Push apart: start at the real positions, push overlapping pairs apart,
 // scale the whole arrangement uniformly to fit.
 function layoutNatural(ws, S, A, info) {
   const items = prep(ws, S), pad = estPad(items, S, A);

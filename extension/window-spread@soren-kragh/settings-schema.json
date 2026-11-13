@@ -57,7 +57,7 @@
     },
     "sec-general": {
       "type": "section",
-      "title": "General (both views)",
+      "title": "General",
       "keys": [
         "use-cache",
         "debug-log"
@@ -163,17 +163,17 @@
     "description": "Layout algorithm",
     "options": {
       "Optimizer": "anneal",
-      "Push apart, then scale": "natural",
+      "Push apart": "natural",
       "Ordered rows": "rows",
       "Equal grid": "grid"
     },
-    "tooltip": "How thumbnails are arranged. All algorithms use only window positions and sizes, never stacking order or focus."
+    "tooltip": "How thumbnails are arranged. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: a few tens of milliseconds when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast."
   },
   "use-cache": {
     "type": "switch",
     "default": true,
     "description": "Reuse the previous layout when nothing has changed",
-    "tooltip": "Keeps both views quick by reusing the previous arrangement when nothing has changed; the result is the same either way. Leave this on. Switching it off is only useful for troubleshooting."
+    "tooltip": "Keeps views quick by reusing the previous arrangement when nothing has changed; the result is the same either way. Leave this on. Switching it off is only useful for troubleshooting."
   },
   "restore-defaults": {
     "type": "button",
@@ -214,7 +214,7 @@
     "max": 1,
     "step": 0.05,
     "description": "Size fidelity",
-    "tooltip": "1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences. Not used by the equal grid.",
+    "tooltip": "1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences.",
     "dependency": "algorithm!=grid"
   },
   "max-scale": {
@@ -230,14 +230,14 @@
     "type": "switch",
     "default": false,
     "description": "Always center the arrangement",
-    "tooltip": "When off, the arrangement is moved toward where the real windows are, as far as the screen allows. Not used by the equal grid.",
+    "tooltip": "When off, the arrangement is moved toward where the real windows are, as far as the screen allows.",
     "dependency": "algorithm!=grid"
   },
   "fill": {
     "type": "switch",
     "default": false,
     "description": "Fill gaps afterwards",
-    "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful. Not used by the equal grid.",
+    "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.",
     "dependency": "algorithm!=grid"
   },
   "grow-limit": {
@@ -403,13 +403,13 @@
   "scale-enabled": {
     "type": "switch",
     "default": true,
-    "description": "Enable",
+    "description": "Enable Window Spread",
     "tooltip": "When off, Cinnamon arranges Show all windows itself."
   },
   "expo-enabled": {
     "type": "switch",
     "default": true,
-    "description": "Enable",
+    "description": "Enable Window Spread",
     "tooltip": "When off, Cinnamon arranges the windows in Show all workspaces itself."
   },
   "expo-algorithm": {
@@ -418,11 +418,11 @@
     "description": "Layout algorithm",
     "options": {
       "Optimizer": "anneal",
-      "Push apart, then scale": "natural",
+      "Push apart": "natural",
       "Ordered rows": "rows",
       "Equal grid": "grid"
     },
-    "tooltip": "How windows are arranged inside each workspace. Equal grid makes even small windows reasonably big, which helps in the small workspace previews."
+    "tooltip": "How windows are arranged inside each workspace. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: a few tens of milliseconds when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast. Makes even small windows reasonably big, which helps in the small previews."
   },
   "expo-margin": {
     "type": "spinbutton",
@@ -451,7 +451,7 @@
     "max": 1,
     "step": 0.05,
     "description": "Size fidelity",
-    "tooltip": "1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences. Lower values make small windows easier to see in the small previews. Not used by the equal grid.",
+    "tooltip": "1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences. Lower values make small windows easier to see in the small previews.",
     "dependency": "expo-algorithm!=grid"
   },
   "expo-max-scale": {
@@ -467,14 +467,14 @@
     "type": "switch",
     "default": false,
     "description": "Always center the arrangement",
-    "tooltip": "When off, the arrangement is moved toward where the real windows are, as far as the preview allows. Not used by the equal grid.",
+    "tooltip": "When off, the arrangement is moved toward where the real windows are, as far as the preview allows.",
     "dependency": "expo-algorithm!=grid"
   },
   "expo-fill": {
     "type": "switch",
     "default": false,
     "description": "Fill gaps afterwards",
-    "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful. Not used by the equal grid.",
+    "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.",
     "dependency": "expo-algorithm!=grid"
   },
   "expo-grow-limit": {

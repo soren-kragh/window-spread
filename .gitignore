@@ -1,0 +1,5 @@
+# Created by the tools and tests (builds, downloaded sources, npm packages)
+dist/
+tests/.cinnamon-src/
+tests/node_modules/
+node_modules/
