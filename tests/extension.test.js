@@ -207,15 +207,14 @@ async function runChecks() {
   // the engine's own answer for the same input, with the same settings the extension builds
   const SL = require(path.join(EXT, 'spreadLayout.js'));
   const d = k => schema[k].default;
-  const S = SL.settings('anneal', { margin: d('margin'), spacing: d('spacing') + Math.max(CHROME.top + CHROME.bottom, CHROME.left + CHROME.right),
-    fidelity: d('fidelity'), maxScale: Math.min(1, d('max-scale')), centered: d('centered'), fill: d('fill'), growLimit: d('grow-limit'),
-    wScale: d('w-scale'), wDisp: d('w-disp'), wRel: d('w-rel'), relMode: d('rel-mode'), relNear: d('rel-near'),
-    iterations: d('anneal-effort') * 1000, restarts: d('anneal-restarts'), checkpoint: d('anneal-checkpoint'), temp: d('anneal-temp'),
-    startFrom: d('anneal-start-from'), seed: d('anneal-seed'), bailout: d('anneal-bailout'), polish: d('anneal-polish'),
-    pushStart: { iterations: d('natural-iterations'), step: d('natural-step'), aspect: d('natural-aspect'), polish: d('natural-polish') },
+  const S = SL.settings('optimizer', { margin: d('margin'), gap: d('gap') + Math.max(CHROME.top + CHROME.bottom, CHROME.left + CHROME.right),
+    fidelity: d('fidelity'), maxScale: Math.min(1, d('max-scale')), centered: d('centered'), fill: d('fill'), maxGrowth: d('max-growth'),
+    wSize: d('w-size'), wPlace: d('w-place'), wRelations: d('w-relations'), relationsMethod: d('relations-method'), neighborFocus: d('neighbor-focus'),
+    steps: d('optimizer-effort') * 100,
+    pushStart: { passes: SL.DEFAULTS.push.passes, strength: d('push-strength'), matchShape: d('push-match-shape'), polish: d('push-polish') },
     rowsStart: { rows: d('rows-count') } });
   const area = { x: CHROME.left, y: CHROME.top, w: 2560 - CHROME.left - CHROME.right, h: 1440 - CHROME.top - CHROME.bottom };
-  const want = SL.compute(frames.map(f => ({ id: f.seq, x: f.x, y: f.y, w: f.w, h: f.h })), area, 'anneal', S).targets;
+  const want = SL.compute(frames.map(f => ({ id: f.seq, x: f.x, y: f.y, w: f.w, h: f.h })), area, 'optimizer', S).targets;
   let maxErr = 0;
   for (const p of placed) { const t = want.filter(t => t.id === p.seq)[0]; maxErr = Math.max(maxErr, Math.abs(p.x - t.x), Math.abs(p.y - t.y), Math.abs(p.w - t.w), Math.abs(p.h - t.h)); }
   ok('Cinnamon\'s own fitting code puts each thumbnail where the engine says', maxErr < 1.001,
@@ -228,13 +227,13 @@ async function runChecks() {
     ok('a minimized window is laid out like the others (exactly as if it weren\'t minimized)', JSON.stringify(placedU) === JSON.stringify(placed)); }
   const mon2 = monitor(frames.slice().reverse()), placed2 = place(mon2, P._computeAllWindowSlots.call(mon2, n));
   ok('another stacking order gives every window the same place', placed2.every(p => { const q = placed.filter(q => q.seq === p.seq)[0]; return q.x === p.x && q.y === p.y; }));
-  ok('window title width limited to the smallest thumbnail plus the gap', mon._slotWidth === Math.floor(Math.min.apply(null, want.map(t => t.w)) + S.spacing), mon._slotWidth + ' px');
-  for (const alg of ['natural', 'rows', 'grid']) {
+  ok('window title width limited to the smallest thumbnail plus the gap', mon._slotWidth === Math.floor(Math.min.apply(null, want.map(t => t.w)) + S.gap), mon._slotWidth + ' px');
+  for (const alg of ['push', 'rows', 'grid']) {
     settingsNow().setValue('algorithm', alg); logs.length = 0;
     const s = P._computeAllWindowSlots.call(monitor(frames), n);
     ok('algorithm "' + alg + '" works', s.length === n && !logs.some(l => l[0] === 'error'));
   }
-  settingsNow().setValue('algorithm', 'anneal');
+  settingsNow().setValue('algorithm', 'optimizer');
 
   section('Cinnamon integration: cache and diagnostics');
   settingsNow().setValue('debug-log', true);
@@ -413,15 +412,15 @@ async function runChecks() {
         if (b.x < m.x + d('expo-margin') - 0.5 || b.y < m.y + d('expo-margin') - 0.5) outside++;
         fr.concat(bd).forEach((o, j) => { if (j === i || j === i + fr.length) return;
           const gap = Math.max(o.x - (b.x + b.w), b.x - (o.x + o.w), o.y - (b.y + b.h), b.y - (o.y + o.h));
-          if (gap < 0) touches++; else if (gap < d('expo-spacing') - 0.01) close++; });
+          if (gap < 0) touches++; else if (gap < d('expo-gap') - 0.01) close++; });
       });
     });
     ok('no badge touches another window or badge, and every badge keeps at least the Expo gap', !touches && !close, touches + ' touching, ' + close + ' too close');
     ok('badges stay inside the Expo margin', !outside);
   }
   ok('no errors', !logs.some(l => l[0] === 'error'), logs.filter(l => l[0] === 'error').map(l => l[1]).join(' | '));
-  // Placement: the engine's layout per monitor, with the Expo settings (default: equal grid, nearest cell)
-  const expoS = SL.settings(schema['expo-algorithm'].default, Object.assign({}, S, { margin: d('expo-margin'), spacing: d('expo-spacing') + OVERHANG }));
+  // Placement: the engine's layout per monitor, with the Expo settings (default: the optimizer)
+  const expoS = SL.settings(schema['expo-algorithm'].default, Object.assign({}, S, { margin: d('expo-margin'), gap: d('expo-gap') + OVERHANG }));
   let placeErr = 0, offMon = 0, clashE = 0, tight = 0;
   MONITORS.forEach((m, mi) => {
     // a window being dragged keeps its place in the layout (as in Cinnamon) but isn't moved
@@ -435,13 +434,13 @@ async function runChecks() {
       if (g.x < m.x + expoS.margin + OVERHANG - 0.5 || g.y < m.y + expoS.margin + OVERHANG - 0.5 || g.x + g.w > m.x + m.width - expoS.margin + 0.5 || g.y + g.h > m.y + m.height - expoS.margin + 0.5) offMon++;
       for (const h of got) if (h !== g) {
         const gap = Math.max(h.x - (g.x + g.w), g.x - (h.x + h.w), h.y - (g.y + g.h), g.y - (h.y + h.h));
-        if (gap < 0) clashE++; else if (gap < d('expo-spacing') - 0.01) tight++;
+        if (gap < 0) clashE++; else if (gap < d('expo-gap') - 0.01) tight++;
       }
     }
   });
   ok('each window\'s visible frame lands exactly where the engine puts it (actor offset for invisible borders handled)', placeErr < 1e-6, 'max deviation ' + placeErr.toExponential(1) + ' px');
   ok('windows stay on their own monitor, inside the Expo margin, without overlaps, with at least the Expo gap', !offMon && !clashE && !tight);
-  ok('default Expo algorithm is the equal grid', schema['expo-algorithm'].default === 'grid' && logs.some(l => /^\[window-spread\] expo, .*grid/.test(l[1])));
+  ok('default Expo algorithm is the optimizer', schema['expo-algorithm'].default === 'optimizer' && logs.some(l => /^\[window-spread\] expo, .*Optimizer/.test(l[1])));
   // Stacking order never matters
   const thR = expoThumb(EXPO_SPECS.slice().reverse()); E.overviewModeOn.call(thR);
   const posN = JSON.stringify(shownOf(thN).map(frameOnScreen).sort((a, b) => a.seq - b.seq)), posR = JSON.stringify(shownOf(thR).map(frameOnScreen).sort((a, b) => a.seq - b.seq));
@@ -456,7 +455,7 @@ async function runChecks() {
   logs.length = 0; P._computeAllWindowSlots.call(monitor(frames), n); P._computeAllWindowSlots.call(monitor(frames), n);
   ok('Expo layouts don\'t evict the Show all windows layout of the same workspace', logs.some(l => /^\[window-spread\] monitor index 0, workspace index 1 .*reused cached layout/.test(l[1])));
   // Every algorithm
-  for (const alg of ['anneal', 'natural', 'rows', 'grid']) {
+  for (const alg of ['optimizer', 'push', 'rows', 'grid']) {
     settingsNow().setValue('expo-algorithm', alg); logs.length = 0;
     const th = expoThumb(EXPO_SPECS, 4); E.overviewModeOn.call(th);
     const fr = shownOf(th).map(frameOnScreen);
@@ -467,7 +466,7 @@ async function runChecks() {
   // The two views have independent settings
   { const st = settingsNow(), expoPos = ws => { const th = expoThumb(EXPO_SPECS, ws); E.overviewModeOn.call(th); return JSON.stringify(shownOf(th).map(frameOnScreen)); };
     const scalePos = () => JSON.stringify(place(monitor(frames), P._computeAllWindowSlots.call(monitor(frames), n)));
-    st.setValue('algorithm', 'natural'); st.setValue('expo-algorithm', 'natural');
+    st.setValue('algorithm', 'push'); st.setValue('expo-algorithm', 'push');
     const expo0 = expoPos(11), scale0 = scalePos();
     st.setValue('fidelity', 0.3);
     const expo1 = expoPos(11), scale1 = scalePos();
@@ -518,7 +517,7 @@ async function runChecks() {
   { const r = SL.random(77), many = Array.from({ length: 30 }, (_, i) => { const w = 300 + r() * 1200, h = 200 + r() * 800; return { seq: 100 + i, x: r() * (2560 - w), y: r() * (1440 - h), w, h }; });
     const a = expoThumb(many, 10); logs.length = 0; const t0 = Date.now(); E.overviewModeOn.call(a); const ms = Date.now() - t0;
     const fr = shownOf(a).map(frameOnScreen); let bad = 0;
-    for (const g of fr) for (const h of fr) if (g !== h && Math.max(h.x - (g.x + g.w), g.x - (h.x + h.w), h.y - (g.y + g.h), g.y - (h.y + h.h)) < d('expo-spacing') - 0.01) bad++;
+    for (const g of fr) for (const h of fr) if (g !== h && Math.max(h.x - (g.x + g.w), g.x - (h.x + h.w), h.y - (g.y + g.h), g.y - (h.y + h.h)) < d('expo-gap') - 0.01) bad++;
     ok('a crowded workspace (30 windows): no overlaps, gaps kept, thumbnails never larger than real size', !bad && fr.every(g => g.scale <= 1 + 1e-9), ms + ' ms'); }
   settingsNow().setValue('debug-log', false);
 

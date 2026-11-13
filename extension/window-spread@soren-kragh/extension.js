@@ -74,30 +74,28 @@ const EXPO_ICON_OFFSET = -5;        // ICON_OFFSET: on-screen offset of the app 
 const EXPO_ICON_SCALE = 0.25;       // app icon scale factor in overviewModeOn ("0.25/...")
 
 // Settings dialog key -> engine settings group and key, and optionally a unit: the engine
-// value is the dialog value times the unit (the effort is shown in thousands of moves).
+// value is the dialog value times the unit (the effort: 1 = 100 descent steps).
 // The engine's DEFAULTS are the reference for default values; settings-schema.json is
-// generated from them. Engine settings not listed here keep their DEFAULTS value (e.g.
-// scoring.wSizes, "Keep sizes": it rarely changes a layout on real desktops, so it isn't
-// offered in the settings window).
+// generated from them. Engine settings not listed here keep their DEFAULTS value, e.g.
+// scoring.wSizes ("Keep sizes": it never changes a layout in the extension) and push.passes
+// (only a safety limit: push apart stops when nothing overlaps, long before it).
 const SETTINGS_MAP = [
-  ["margin", "common", "margin"], ["spacing", "common", "spacing"], ["fidelity", "common", "fidelity"],
+  ["margin", "common", "margin"], ["gap", "common", "gap"], ["fidelity", "common", "fidelity"],
   ["max-scale", "common", "maxScale"], ["centered", "common", "centered"], ["fill", "common", "fill"],
-  ["grow-limit", "common", "growLimit"],
-  ["w-scale", "scoring", "wScale"], ["w-disp", "scoring", "wDisp"],
-  ["w-rel", "scoring", "wRel"], ["rel-mode", "scoring", "relMode"], ["rel-near", "scoring", "relNear"],
-  ["anneal-effort", "anneal", "iterations", 1000], ["anneal-restarts", "anneal", "restarts"],
-  ["anneal-checkpoint", "anneal", "checkpoint"], ["anneal-temp", "anneal", "temp"],
-  ["anneal-start-from", "anneal", "startFrom"], ["anneal-seed", "anneal", "seed"],
-  ["anneal-bailout", "anneal", "bailout"], ["anneal-polish", "anneal", "polish"],
-  ["natural-iterations", "natural", "iterations"], ["natural-step", "natural", "step"],
-  ["natural-aspect", "natural", "aspect"], ["natural-polish", "natural", "polish"],
+  ["max-growth", "common", "maxGrowth"],
+  ["w-size", "scoring", "wSize"], ["w-place", "scoring", "wPlace"],
+  ["w-relations", "scoring", "wRelations"], ["relations-method", "scoring", "relationsMethod"],
+  ["neighbor-focus", "scoring", "neighborFocus"],
+  ["optimizer-effort", "optimizer", "steps", 100],
+  ["push-strength", "push", "strength"], ["push-match-shape", "push", "matchShape"],
+  ["push-polish", "push", "polish"],
   ["rows-count", "rows", "rows"],
 ];
 // Show all workspaces has its own copies of the layout settings (defaults from the same engine
-// DEFAULTS); margin and gap are separate settings with Cinnamon's own Expo spacing as default.
+// DEFAULTS); margin and gap are separate settings with Cinnamon's own Expo gap as default.
 const EXPO_SETTINGS_MAP = [
   ["expo-fidelity", "common", "fidelity"], ["expo-max-scale", "common", "maxScale"],
-  ["expo-centered", "common", "centered"], ["expo-fill", "common", "fill"], ["expo-grow-limit", "common", "growLimit"],
+  ["expo-centered", "common", "centered"], ["expo-fill", "common", "fill"], ["expo-max-growth", "common", "maxGrowth"],
 ];
 
 let extensionMeta = null;   // metadata.json, given to init()
@@ -106,6 +104,12 @@ let cache = null;           // engine layout cache: last layout per monitor and 
 let originals = null;       // Cinnamon's original methods, restored by disable()
 let reportedOnce = false;   // decorations already logged this session
 let thumbCenters = new WeakMap(); // window clone -> its thumbnail center, for keyboard navigation
+
+// Algorithm names as the settings window shows them, for the log.
+const ALGORITHM_NAMES = {
+  optimizer: "Optimizer", push: "Push apart", rows: "Ordered rows", grid: "Equal grid"
+};
+const windowCount = n => n + (n === 1 ? " window" : " windows");
 
 function log(msg) { global.log(LOG_PREFIX + msg); }
 function logError(msg, e) { global.logError(LOG_PREFIX + msg + (e ? ": " + e + (e.stack ? "\n" + e.stack : "") : "")); }
@@ -132,18 +136,21 @@ function forgetCenters(mon) {
 // ("algorithm" for Show all windows, "expo-algorithm" for Show all workspaces), with
 // `overrides` on top (Expo's own margin and gap).
 function readConfig(algorithmKey, overrides) {
-  const groups = { common: {}, scoring: {}, anneal: {}, natural: {}, rows: {}, grid: {} };
+  // The engine's defaults, with the settings window's values on top (not every engine
+  // setting is in the window, e.g. push.passes, used below for the optimizer's start).
+  const groups = {};
+  for (const g of Object.keys(SpreadLayout.DEFAULTS)) groups[g] = Object.assign({}, SpreadLayout.DEFAULTS[g]);
   for (const [key, group, engineKey, unit] of SETTINGS_MAP) {
     const v = settings.getValue(key);
     groups[group][engineKey] = unit ? v * unit : v;
   }
   groups.common.maxScale = Math.min(1, groups.common.maxScale); // Cinnamon caps thumbnails at real size
   // The optimizer starts from the push-apart and ordered-rows layouts with their own settings.
-  groups.anneal.pushStart = { iterations: groups.natural.iterations, step: groups.natural.step,
-    aspect: groups.natural.aspect, polish: groups.natural.polish };
-  groups.anneal.rowsStart = { rows: groups.rows.rows };
+  const p = groups.push;
+  groups.optimizer.pushStart = { passes: p.passes, strength: p.strength, matchShape: p.matchShape, polish: p.polish };
+  groups.optimizer.rowsStart = { rows: groups.rows.rows };
   let algorithm = settings.getValue(algorithmKey || "algorithm");
-  if (SpreadLayout.ALGORITHMS.indexOf(algorithm) < 0) algorithm = "anneal";
+  if (SpreadLayout.ALGORITHMS.indexOf(algorithm) < 0) algorithm = "optimizer";
   return {
     algorithm,
     useCache: settings.getValue("use-cache"),
@@ -169,7 +176,7 @@ function computeSlots(mon, n) {
 
   const cfg = readConfig("algorithm");
   // Gap between thumbnails = the user's gap + the decorations of both neighbors.
-  const S = Object.assign({}, cfg.S, { spacing: cfg.S.spacing + Math.max(top + bottom, left + right) });
+  const S = Object.assign({}, cfg.S, { gap: cfg.S.gap + Math.max(top + bottom, left + right) });
   // The engine lays out the thumbnails themselves; keep their decorations on screen too.
   const area = { x: mon._x + left, y: mon._y + top, w: mon._width - left - right, h: mon._height - top - bottom };
   // Window frames and stable ids. Minimized windows report their normal frame and are
@@ -206,12 +213,13 @@ function computeSlots(mon, n) {
   // Cinnamon limits every window title to the same width, _slotWidth. Use the smallest
   // thumbnail width plus the gap, so no title can reach into a neighbor's space (long titles
   // under big thumbnails are shortened a little more than strictly necessary).
-  mon._slotWidth = Math.floor(Math.min(...widths) + S.spacing);
+  mon._slotWidth = Math.floor(Math.min(...widths) + S.gap);
 
   if (cfg.debug) {
     // Note: opening the view lays out every workspace at once, starting with workspace 0.
     const minimized = clones.filter(c => c.metaWindow.minimized);
-    log(`${describeSlot(mon)}: ${n} windows (${minimized.length} minimized), ${cfg.algorithm}, ` +
+    log(`${describeSlot(mon)}: ${windowCount(n)} (${minimized.length} minimized), ` +
+      `${ALGORITHM_NAMES[cfg.algorithm]}, ` +
       `${res.cached ? "reused cached layout" : "computed"} in ${ms.toFixed(1)} ms, score ${res.score.total.toFixed(3)}`);
     for (const c of minimized) {
       const r = c.metaWindow.get_frame_rect();
@@ -220,7 +228,7 @@ function computeSlots(mon, n) {
     if (!reportedOnce) { // doesn't change during a session
       reportedOnce = true;
       log(`decorations around thumbnails: top ${top}, bottom ${bottom}, left ${left}, right ${right} px; ` +
-        `effective gap ${S.spacing} px; monitor area ${mon._x},${mon._y} ${mon._width}x${mon._height}`);
+        `effective gap ${S.gap} px; monitor area ${mon._x},${mon._y} ${mon._width}x${mon._height}`);
     }
   }
   return slots;
@@ -278,7 +286,7 @@ function expoOverviewModeOn(thumb) {
   // Like the Scale view's titles and close buttons, this room is added to the margin (left and
   // top) and to the gap, so the settings measure the space between a badge and the next window.
   const badgeOverhang = -EXPO_ICON_OFFSET / boxScale;
-  const own = { margin: settings.getValue("expo-margin"), spacing: settings.getValue("expo-spacing") + badgeOverhang };
+  const own = { margin: settings.getValue("expo-margin"), gap: settings.getValue("expo-gap") + badgeOverhang };
   for (const [key, , engineKey] of EXPO_SETTINGS_MAP) own[engineKey] = settings.getValue(key);
   own.maxScale = Math.min(1, own.maxScale); // Cinnamon caps thumbnails at real size
   const cfg = readConfig("expo-algorithm", own);
@@ -346,7 +354,7 @@ function expoOverviewModeOn(thumb) {
 
     if (cfg.debug) {
       const name = describeSlot({ monitorIndex, metaWorkspace: thumb.metaWorkspace });
-      log(`expo, ${name}: ${mine.length} windows, ${cfg.algorithm}, ` +
+      log(`expo, ${name}: ${windowCount(mine.length)}, ${ALGORITHM_NAMES[cfg.algorithm]}, ` +
         `${res.cached ? "reused cached layout" : "computed"} in ${ms.toFixed(1)} ms, score ${res.score.total.toFixed(3)}`);
     }
   }

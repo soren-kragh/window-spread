@@ -21,20 +21,20 @@ function shuffled(a, seed) {
   return b;
 }
 const byId = T => T.slice().sort((a, b) => a.id - b.id);
-const quick = (alg, ov) => SL.settings(alg, Object.assign(alg === 'anneal' ? { iterations: 4000 } : {}, ov || {}));
+const quick = (alg, ov) => SL.settings(alg, Object.assign(alg === 'optimizer' ? { steps: 400 } : {}, ov || {}));
 
 async function run() {
   section('Engine: API');
   ok('exposes DEFAULTS, ALGORITHMS, settings, compute, createCache, score, random',
     ['DEFAULTS', 'ALGORITHMS', 'settings', 'compute', 'createCache', 'score', 'random'].every(k => k in SL));
-  ok('algorithms are anneal, natural, rows, grid', SL.ALGORITHMS.join() === 'anneal,natural,rows,grid');
+  ok('algorithms are optimizer, push, rows, grid', SL.ALGORITHMS.join() === 'optimizer,push,rows,grid');
   let frozen = true; try { SL.DEFAULTS.common.margin = -1; } catch (e) { /* strict mode throws */ }
   frozen = SL.DEFAULTS.common.margin !== -1;
   ok('DEFAULTS cannot be modified', frozen);
-  const sa = SL.settings('anneal');
-  ok('settings("anneal") includes the push-apart and rows start settings from their DEFAULTS',
-    sa.pushStart.step === SL.DEFAULTS.natural.step && sa.rowsStart.rows === SL.DEFAULTS.rows.rows);
-  ok('empty input gives an empty result', SL.compute([], MON, 'anneal').targets.length === 0);
+  const sa = SL.settings('optimizer');
+  ok('settings("optimizer") includes the push-apart and rows start settings from their DEFAULTS',
+    sa.pushStart.strength === SL.DEFAULTS.push.strength && sa.rowsStart.rows === SL.DEFAULTS.rows.rows);
+  ok('empty input gives an empty result', SL.compute([], MON, 'optimizer').targets.length === 0);
   let threw = false; try { SL.compute(desk(1, 3), MON, 'bogus'); } catch (e) { threw = true; }
   ok('unknown algorithm is an error', threw);
 
@@ -50,7 +50,7 @@ async function run() {
         for (const b of T) if (a.id < b.id) {
           const gx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), gy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
           const gap = Math.max(gx, gy);
-          if (gap < 0) overlaps++; else if (gap < S.spacing - 0.01) tightGaps++;
+          if (gap < 0) overlaps++; else if (gap < S.gap - 0.01) tightGaps++;
         }
       }
       if (JSON.stringify(T) !== JSON.stringify(SL.compute(ws, MON, alg, S).targets)) nondet++;
@@ -67,7 +67,7 @@ async function run() {
   section('Engine: uniform scale');
   {
     let worst = 1;
-    for (const alg of ['anneal', 'natural', 'rows']) for (const n of [4, 9]) {
+    for (const alg of ['optimizer', 'push', 'rows']) for (const n of [4, 9]) {
       const T = SL.compute(desk(3, n), MON, alg, quick(alg, { fidelity: 1, maxScale: 1.5 })).targets;
       const s = T.map(t => t.scale); worst = Math.max(worst, Math.max.apply(null, s) / Math.min.apply(null, s));
     }
@@ -117,9 +117,9 @@ async function run() {
 
   section('Engine: monitors');
   {
-    const ws = desk(4, 7), S = quick('anneal');
-    const a = SL.compute(ws, MON, 'anneal', S);
-    const b = SL.compute(ws.map(w => Object.assign({}, w, { x: w.x + 2560, y: w.y + 200 })), { x: 2560, y: 200, w: 1920, h: 1080 }, 'anneal', S);
+    const ws = desk(4, 7), S = quick('optimizer');
+    const a = SL.compute(ws, MON, 'optimizer', S);
+    const b = SL.compute(ws.map(w => Object.assign({}, w, { x: w.x + 2560, y: w.y + 200 })), { x: 2560, y: 200, w: 1920, h: 1080 }, 'optimizer', S);
     const dev = Math.max.apply(null, byId(a.targets).map((t, i) => { const u = byId(b.targets)[i]; return Math.max(Math.abs(u.x - t.x - 2560), Math.abs(u.y - t.y - 200), Math.abs(u.w - t.w)); }));
     ok('a monitor elsewhere (e.g. a second monitor) gives the same layout, shifted', dev < 1e-6, 'max deviation ' + dev.toExponential(1) + ' px');
   }
@@ -130,7 +130,7 @@ async function run() {
     const left = n => desk(5, n).map(w => Object.assign({}, w, { x: w.x / 4 }));
     const mon = { x: 100, y: 50, w: 1920, h: 1080 };
     let worst = 0, cases = 0;
-    for (const alg of ['anneal', 'natural', 'rows']) for (const n of [1, 2, 5]) {
+    for (const alg of ['optimizer', 'push', 'rows']) for (const n of [1, 2, 5]) {
       for (const ov of [{}, { polish: false }, { fill: true }]) {
         const S = quick(alg, Object.assign({ centered: true }, ov));
         const T = SL.compute(left(n), mon, alg, S).targets;
@@ -160,11 +160,11 @@ async function run() {
     // Monitors as the extension passes them (after decorations), one of them not at 0,0;
     // windows random, all maximized (identical centers), or bigger than the monitor.
     const MONS = [{ x: 1920, y: 300, w: 1338, h: 718 }, { x: 0, y: 0, w: 1052, h: 1870 }];
-    const SETS = [{}, { margin: 0 }, { margin: 200 }, { spacing: 0 }, { spacing: 58 }, { spacing: 130 },
-      { fidelity: 0 }, { maxScale: 0.2 }, { centered: true }, { fill: true, growLimit: 3 }, { relMode: 'order' },
-      { wRel: 0, wDisp: 0 }];
-    const ALGS = [['anneal', {}], ['anneal', { restarts: 1, startFrom: 'rows' }], ['natural', {}],
-      ['natural', { iterations: 10 }], ['rows', {}], ['rows', { rows: 1 }], ['rows', { rows: 8 }], ['grid', {}]];
+    const SETS = [{}, { margin: 0 }, { margin: 200 }, { gap: 0 }, { gap: 58 }, { gap: 130 },
+      { fidelity: 0 }, { maxScale: 0.2 }, { centered: true }, { fill: true, maxGrowth: 3 }, { relationsMethod: 'order' },
+      { wRelations: 0, wPlace: 0 }];
+    const ALGS = [['optimizer', {}], ['optimizer', { starts: 1, startFrom: 'rows' }], ['push', {}],
+      ['push', { passes: 10 }], ['rows', {}], ['rows', { rows: 1 }], ['rows', { rows: 8 }], ['grid', {}]];
     const frames = (mon, n, kind, seed) => {
       const r = SL.random(seed);
       return Array.from({ length: n }, (_, i) => {
@@ -176,7 +176,7 @@ async function run() {
     };
     let runs = 0, unusable = 0, overlaps = 0, tight = 0, outside = 0, tooBig = 0, threw = [], seed = 1;
     for (const mon of MONS) for (const S0 of SETS) for (const [alg, ov] of ALGS) for (const n of [1, 2, 6, 14]) for (const kind of ['rand', 'max', 'big']) {
-      const S = SL.settings(alg, Object.assign(alg === 'anneal' ? { iterations: 1500 } : {}, S0, ov));
+      const S = SL.settings(alg, Object.assign(alg === 'optimizer' ? { steps: 150 } : {}, S0, ov));
       let T; runs++;
       try { T = SL.compute(frames(mon, n, kind, seed++), mon, alg, S).targets; }
       catch (e) { threw.push(alg + ' ' + JSON.stringify(Object.assign({}, S0, ov)) + ': ' + e.message); continue; }
@@ -188,7 +188,7 @@ async function run() {
         for (const b of T) if (a.id < b.id) {
           const gap = Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h)));
           if (gap < -0.01) overlaps++;
-          else if (gap < S.spacing - 0.01 && S.spacing <= 58) tight++; // larger gaps: see the guarantees in the engine
+          else if (gap < S.gap - 0.01 && S.gap <= 58) tight++; // larger gaps: see the guarantees in the engine
         }
       }
     }
@@ -198,23 +198,23 @@ async function run() {
       overlaps + ' overlaps, ' + outside + ' outside, ' + tooBig + ' too big');
     ok('gaps at least the setting, up to the decorations of the default gap (58 px)', !tight, tight + ' pairs too close');
     const crowded = { x: 0, y: 0, w: 1338, h: 718 }, many = frames(crowded, 24, 'rand', 99);
-    const fixed1 = SL.compute(many, crowded, 'rows', SL.settings('rows', { rows: 1, spacing: 58 })).targets;
+    const fixed1 = SL.compute(many, crowded, 'rows', SL.settings('rows', { rows: 1, gap: 58 })).targets;
     ok('ordered rows with a fixed row count that leaves no room falls back to the best row count',
       fixed1.every(t => t.w > 0) && new Set(fixed1.map(t => Math.round(t.y))).size > 1);
     let passes10 = 0;
     for (const n of [8, 16, 24]) for (const s of [1, 2, 3, 4]) {
       const T = SL.compute(frames({ x: 0, y: 0, w: 2532, h: 1390 }, n, 'rand', 500 + n * 10 + s), { x: 0, y: 0, w: 2532, h: 1390 },
-        'natural', SL.settings('natural', { iterations: 10, spacing: 58 })).targets;
+        'push', SL.settings('push', { passes: 10, gap: 58 })).targets;
       for (const a of T) for (const b of T) if (a.id < b.id &&
         Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h))) < 58 - 0.01) passes10++;
     }
     ok('push-apart with its fewest passes (10) still keeps the gap', !passes10, passes10 + ' pairs too close');
     const bad = [[{ id: 1, x: 0, y: 0, w: 0, h: 0 }], [{ id: 1, x: NaN, y: 0, w: 10, h: 10 }]];
-    const throwsFor = (ws, mon, S) => { try { SL.compute(ws, mon, 'natural', S); return false; } catch (e) { return true; } };
+    const throwsFor = (ws, mon, S) => { try { SL.compute(ws, mon, 'push', S); return false; } catch (e) { return true; } };
     ok('a window of size 0, a non-finite number, or a margin that leaves no area is an error, not an unusable layout',
       bad.every(ws => throwsFor(ws, MON)) &&
-      throwsFor(desk(1, 3), { x: 0, y: 0, w: 300, h: 300 }, SL.settings('natural', { margin: 200 })));
-    const ws5 = desk(5, 6), S5 = SL.settings('natural', { relMode: 'order' }), r5 = SL.compute(ws5, MON, 'natural', S5);
+      throwsFor(desk(1, 3), { x: 0, y: 0, w: 300, h: 300 }, SL.settings('push', { margin: 200 })));
+    const ws5 = desk(5, 6), S5 = SL.settings('push', { relationsMethod: 'order' }), r5 = SL.compute(ws5, MON, 'push', S5);
     ok('score() gives the same score as compute() returned',
       Math.abs(SL.score(r5.targets.map(t => Object.assign({ ow: ws5.find(w => w.id === t.id).w, oh: ws5.find(w => w.id === t.id).h }, t)), ws5, MON, S5).total - r5.score.total) < 1e-9);
   }
@@ -223,13 +223,13 @@ async function run() {
   {
     let lostPush = 0, lostRows = 0, runs = 0;
     const starts = [[3, 'mixed'], [1, 'mixed'], [3, 'push'], [3, 'grid']];
-    for (const step of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) for (const [restarts, startFrom] of starts) {
+    for (const step of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) for (const [nStarts, startFrom] of starts) {
       const ws = desk(n + rowsCount, n);
-      const nat = SL.settings('natural', { step }), rows = SL.settings('rows', { rows: rowsCount });
-      const opt = SL.settings('anneal', { iterations: 3000, restarts, startFrom,
-        pushStart: { iterations: nat.iterations, step: nat.step, aspect: nat.aspect, polish: nat.polish }, rowsStart: { rows: rowsCount } });
-      const a = SL.compute(ws, MON, 'anneal', opt).score.total; runs++;
-      if (SL.compute(ws, MON, 'natural', nat).score.total < a - 1e-9) lostPush++;
+      const nat = SL.settings('push', { strength: step }), rows = SL.settings('rows', { rows: rowsCount });
+      const opt = SL.settings('optimizer', { steps: 300, starts: nStarts, startFrom,
+        pushStart: { passes: nat.passes, strength: nat.strength, matchShape: nat.matchShape, polish: nat.polish }, rowsStart: { rows: rowsCount } });
+      const a = SL.compute(ws, MON, 'optimizer', opt).score.total; runs++;
+      if (SL.compute(ws, MON, 'push', nat).score.total < a - 1e-9) lostPush++;
       if (SL.compute(ws, MON, 'rows', rows).score.total < a - 1e-9) lostRows++;
     }
     ok('the optimizer never scores worse than push-apart or ordered rows with the same settings, whatever it starts from',
@@ -238,23 +238,23 @@ async function run() {
 
   section('Engine: cache');
   {
-    const ws = desk(5, 6), S = quick('anneal'), cache = SL.createCache();
-    const fresh = JSON.stringify(SL.compute(ws, MON, 'anneal', S).targets);
-    let r = cache.compute(ws, MON, 'anneal', S, 'm0/w1');
+    const ws = desk(5, 6), S = quick('optimizer'), cache = SL.createCache();
+    const fresh = JSON.stringify(SL.compute(ws, MON, 'optimizer', S).targets);
+    let r = cache.compute(ws, MON, 'optimizer', S, 'm0/w1');
     ok('first call computes, with the same result as compute()', r.cached === false && JSON.stringify(r.targets) === fresh);
-    ok('different window order (stacking) reuses it', cache.compute(shuffled(ws, 9), MON, 'anneal', S, 'm0/w1').cached === true);
-    ok('extra fields (minimized, focus) are ignored', cache.compute(ws.map(w => Object.assign({ minimized: true }, w)), MON, 'anneal', S, 'm0/w1').cached === true);
-    ok('settings the engine does not use are ignored', cache.compute(ws, MON, 'anneal', Object.assign({ duration: 900 }, S), 'm0/w1').cached === true);
-    r = cache.compute(ws, MON, 'anneal', S, 'm0/w1'); r.targets[0].x = -999;
-    ok('modifying a returned result does not affect the cache', cache.compute(ws, MON, 'anneal', S, 'm0/w1').targets[0].x !== -999);
-    ok('moving a window by 1 px recomputes', cache.compute(ws.map((w, i) => i === 2 ? Object.assign({}, w, { x: w.x + 1 }) : w), MON, 'anneal', S, 'm0/w1').cached === false);
-    ok('changing an engine setting recomputes', cache.compute(ws, MON, 'anneal', Object.assign({}, S, { spacing: S.spacing + 2 }), 'm0/w1').cached === false);
+    ok('different window order (stacking) reuses it', cache.compute(shuffled(ws, 9), MON, 'optimizer', S, 'm0/w1').cached === true);
+    ok('extra fields (minimized, focus) are ignored', cache.compute(ws.map(w => Object.assign({ minimized: true }, w)), MON, 'optimizer', S, 'm0/w1').cached === true);
+    ok('settings the engine does not use are ignored', cache.compute(ws, MON, 'optimizer', Object.assign({ duration: 900 }, S), 'm0/w1').cached === true);
+    r = cache.compute(ws, MON, 'optimizer', S, 'm0/w1'); r.targets[0].x = -999;
+    ok('modifying a returned result does not affect the cache', cache.compute(ws, MON, 'optimizer', S, 'm0/w1').targets[0].x !== -999);
+    ok('moving a window by 1 px recomputes', cache.compute(ws.map((w, i) => i === 2 ? Object.assign({}, w, { x: w.x + 1 }) : w), MON, 'optimizer', S, 'm0/w1').cached === false);
+    ok('changing an engine setting recomputes', cache.compute(ws, MON, 'optimizer', Object.assign({}, S, { gap: S.gap + 2 }), 'm0/w1').cached === false);
     const ws2 = desk(6, 3);
-    cache.compute(ws, MON, 'anneal', S, 'm0/w1'); cache.compute(ws2, MON, 'anneal', S, 'm0/w2');
+    cache.compute(ws, MON, 'optimizer', S, 'm0/w1'); cache.compute(ws2, MON, 'optimizer', S, 'm0/w2');
     ok('each slot (monitor and workspace) keeps its own layout',
-      cache.compute(ws, MON, 'anneal', S, 'm0/w1').cached === true && cache.compute(ws2, MON, 'anneal', S, 'm0/w2').cached === true);
+      cache.compute(ws, MON, 'optimizer', S, 'm0/w1').cached === true && cache.compute(ws2, MON, 'optimizer', S, 'm0/w2').cached === true);
     cache.forget('m0/w1');
-    ok('forget(slot) drops only that slot', cache.compute(ws, MON, 'anneal', S, 'm0/w1').cached === false && cache.compute(ws2, MON, 'anneal', S, 'm0/w2').cached === true);
+    ok('forget(slot) drops only that slot', cache.compute(ws, MON, 'optimizer', S, 'm0/w1').cached === false && cache.compute(ws2, MON, 'optimizer', S, 'm0/w2').cached === true);
   }
 
   section('Engine: rebuilt from its factory (as the lab\'s worker threads do)');
@@ -262,13 +262,13 @@ async function run() {
     const factory = new Function(fs.readFileSync(ENGINE, 'utf8') + ';return createSpreadLayout;')();
     const rebuilt = new Function('return (' + factory.toString() + ')();')();
     const ws = desk(7, 9);
-    ok('gives identical results', JSON.stringify(rebuilt.compute(ws, MON, 'anneal')) === JSON.stringify(SL.compute(ws, MON, 'anneal')));
+    ok('gives identical results', JSON.stringify(rebuilt.compute(ws, MON, 'optimizer')) === JSON.stringify(SL.compute(ws, MON, 'optimizer')));
   }
 
   section('Engine: timing (informational)');
   for (const n of [6, 12, 20]) {
     const ws = desk(8, n), t0 = Date.now();
-    for (let k = 0; k < 3; k++) SL.compute(ws, MON, 'anneal');
+    for (let k = 0; k < 3; k++) SL.compute(ws, MON, 'optimizer');
     note(n + ' windows, default optimizer settings: ' + ((Date.now() - t0) / 3).toFixed(1) + ' ms per layout');
   }
 }

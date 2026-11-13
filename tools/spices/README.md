@@ -9,11 +9,10 @@ another place just because you focused a different one.
 ## What you get
 
 * Thumbnails appear near their real windows and keep their relative sizes.
-* A choice of layouts for each view: Optimizer (the default for Show all
-  windows), Push apart, Ordered rows, and Equal grid (the default for Show all
-  workspaces, which keeps even small windows recognizable in the small
-  previews). The equal grid puts every window in the cell nearest to where it
-  really is.
+* A choice of layouts for each view: Optimizer (the default), Push apart,
+  Ordered rows, and Equal grid. The equal grid makes even small windows
+  reasonably big, and puts every window in the cell nearest to where it really
+  is.
 * Arrow keys in Show all windows move to the nearest thumbnail in that
   direction.
 * Quick: when nothing has changed, the previous arrangement is reused.

@@ -77,10 +77,12 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
 `compute()` pipeline:
 
 1. **Algorithm**, one of
-   * `anneal`: the optimizer. Simulated annealing over window centers, in
-     "layout units" (true relative sizes, one shared scale). Several starts race
-     (section 5.3); aimed moves (5.10); cached pair values (5.11).
-   * `natural`: push apart (overlapping windows pushed apart, then scaled).
+   * `optimizer`: gradient descent over window centers, in "layout units"
+     (true relative sizes, one shared scale), on a smoothed copy of the score.
+     The overlap penalty starts weak and grows, so the arrangement can contract
+     through overlaps before it is pushed apart. One start from each starting
+     layout (5.6); the starts race (5.3). Details and evidence: 5.20.
+   * `push`: push apart (overlapping windows pushed apart, then scaled).
    * `rows`: ordered rows.
    * `grid`: equal grid. Each window goes in its nearest cell: the assignment
      with the smallest total distance between windows and cells, computed
@@ -88,12 +90,12 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
      unevenly.
 2. **Placement:** unless `centered`, the arrangement is moved as a whole toward
    the real windows, as far as the work area allows (5.2).
-3. **Polish** (anneal, natural): greedy small moves into free space that lower
-   the score (5.2; how it is kept cheap: 5.18).
-4. **Safeguard** (anneal): the push-apart and rows layouts the optimizer started
-   from are finished the same way, and the best-scoring layout wins (5.7). It
-   reuses those layouts from the search, and skips polishing a candidate that
-   provably can't win (5.18).
+3. **Polish** (optimizer, push): greedy small moves into free space that
+   lower the score (5.2; how it is kept cheap: 5.18).
+4. **Safeguard** (optimizer): the push-apart and rows layouts the optimizer
+   started from are finished the same way, and the best-scoring layout wins
+   (5.7). It reuses those layouts from the search, and skips polishing a
+   candidate that provably can't win (5.18).
 5. **Fill gaps** (optional): thumbnails grow into free space.
 6. **Score.**
 7. **Center** (if `centered`): the arrangement is moved as a whole to the
@@ -104,9 +106,10 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
    worse fit.
 
 **Score** (lower is better; the same function drives the optimizer, the polish,
-and all comparisons): `wScale × size + wSizes × distortion + wDisp × movement +
-wRel × relations` (+ an overlap term that only matters during the search). Size
-is the mean of −ln(scale) after removing the intended size-fidelity factor.
+and all comparisons): `wSize × size + wSizes × distortion + wPlace × movement +
+wRelations × relations` (+ an overlap term that only matters during the
+search). Size is the mean of −ln(scale) after removing the intended
+size-fidelity factor.
 Distortion is the mean absolute deviation of log scales (0 for one shared
 scale). Movement is the mean distance from real centers, relative to the screen
 diagonal. Relations come in two methods: "order" (left/right, above/below flips,
@@ -203,8 +206,8 @@ whose completion callbacks are what make windows and icons visible again.
   actor and renames the scale `box.thumbnail_scale`. The arrangement logic is
   otherwise identical in 6.0.5 to 6.8.0; a test fingerprints Cinnamon's method
   so a future change is flagged rather than silently overridden.
-* Own settings: `expo-enabled`, `expo-algorithm` (default equal grid),
-  `expo-margin` and `expo-spacing` (default 14 px, as Cinnamon; room for the
+* Own settings: `expo-enabled`, `expo-algorithm` (default optimizer),
+  `expo-margin` and `expo-gap` (default 14 px, as Cinnamon; room for the
   badges is added automatically), and its own copies of size fidelity, max
   scale, centering, gap filling and max growth (`EXPO_SETTINGS_MAP`, same engine
   defaults as Show all windows). Only the scoring weights and the algorithms'
@@ -233,16 +236,16 @@ script). The lab's default settings come from the engine.
 * Deterministic: same input and settings, same output.
 * No overlaps; everything inside the monitor minus `margin` (to 0.5 px); scale
   at most `maxScale`; finite positions and sizes above 0.
-* Gaps at least `spacing`, unless the gap is too large for the screen and the
+* Gaps at least `gap`, unless the gap is too large for the screen and the
   number of windows (tested up to an effective gap of 58 px, the default gap
   plus decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
-  1366×768 screen) push-apart's overlap removal stops short and gaps can be
+  1366×768 screen) push apart's overlap removal stops short and gaps can be
   smaller; the equal grid shrinks its gaps when they would leave no room for
   the cells; ordered rows with a fixed row count that doesn't fit uses the best
   row count instead.
-* push-apart, rows and the optimizer use one shared scale (exact relative sizes
-  at fidelity 1).
-* The optimizer never scores worse than push-apart or ordered rows given the
+* Push apart, ordered rows and the optimizer use one shared scale (exact
+  relative sizes at fidelity 1).
+* The optimizer never scores worse than push apart or ordered rows given the
   same settings (`pushStart`, `rowsStart`), whatever it starts from, as long as
   gap filling is off.
 * Input that can't be laid out (a non-finite number, a window or work area of
@@ -261,11 +264,11 @@ else. This makes every algorithm independent of input order, and so of stacking.
 ### 5.2 Placement toward real windows, and the polish
 Problem seen: a thumbnail obviously could move closer to its window into free
 space, but didn't. Two causes: (a) forced centering made an edge window a
-"counterweight" for the others; (b) the annealing's small final gains are below
-its noise for most of the run, leaving slack. Fixes: placement toward the real
-windows (instead of centering), and a greedy polish. Count of layouts (80
-tested, 12 windows) where some window could move 60 px toward home into free
-space:
+"counterweight" for the others; (b) the search, then simulated annealing (5.20),
+made small final gains below its noise for most of the run, leaving slack.
+Fixes: placement toward the real windows (instead of centering), and a greedy
+polish. Count of layouts (80 tested, 12 windows) where some window could move
+60 px toward home into free space:
 
 | | old | new |
 |---|---|---|
@@ -287,8 +290,16 @@ mean little. 6 desktops × 20 seeds, equal total effort:
 | 4 starts, checkpoint 0.7 | 0.9184 | 0.9810 | 0.1003 |
 
 The number of starts is broadly flat between 2 and 8 (within about 1%); 12 or
-more spread the effort too thin. The current defaults (3 starts, checkpoint 0.2,
-temperature 0.1) were chosen by the user after running the lab's tuner.
+more spread the effort too thin. These measurements are of the simulated
+annealing search the optimizer used before 5.20. With gradient descent the
+search no longer depends on luck. On the 294 desktops of 5.20, 4 starts (one
+per starting layout) racing with checkpoint 0.2 are as good as running all four
+to the end at the default 1000 steps (desktops more than 10% from the best: 7
+and 5; mean gap 1.38% and 1.40%), and clearly better at 500 steps (6 and 12;
+1.69% and 2.56%), so the race stays for users who lower the effort. 3 starts
+are a little worse (6, 1.61%), 8 a little better (4, 1.30%) for the same time.
+The race's settings are fixed (not in the extension's settings window); the
+lab keeps them.
 
 ### 5.4 Size distortion term
 The equal grid used to beat the optimizer on some desktops (2 found where it won
@@ -321,28 +332,28 @@ search by the score, so it never changes a layout there. In the lab, the slider
 stays: it keeps comparisons with the equal grid fair.
 
 ### 5.5 Exact gaps, no outer half-gap
-push-apart and the optimizer used to guess the gap before knowing the final
+Push apart and the optimizer used to guess the gap before knowing the final
 scale (actual smallest gaps 18.2 and 20.8 px for a 24 px setting) and also
 reserved half a gap around the outside. Now they widen the padding until the
 real gap is right, and scale by the windows' extent. Result: smallest gap
-exactly 24.00 px, and *bigger* thumbnails (push-apart average scale 0.401 →
-0.407, optimizer 0.460 → 0.490).
+exactly 24.00 px, and *bigger* thumbnails (average scale: push apart
+0.401 → 0.407, optimizer 0.460 → 0.490).
 
 ### 5.6 Starting points
-The optimizer can start from push-apart, rows, grid, the real positions, or
-"mixed" (one kind per parallel start). Average over three sets of 8 desktops:
-push 0.6139, rows 0.6104, grid 0.6127, real positions 0.6193, mixed 0.6103. No
-single start wins everywhere; mixed is never far from the best. Rows and grid
-starts undo their layout's scale and resolve overlaps (true-size windows can be
-too big for grid cells).
+The optimizer can start from push apart, ordered rows, equal grid, the real
+positions, or "mixed" (one kind per parallel start). Average over three sets of
+8 desktops: push 0.6139, rows 0.6104, grid 0.6127, real positions 0.6193, mixed
+0.6103. No single start wins everywhere; mixed is never far from the best. Rows
+and grid starts undo their layout's scale and resolve overlaps (true-size
+windows can be too big for grid cells).
 
 ### 5.7 Optimizer safeguard, and starts with the algorithms' own settings
 Despite starting from them, the optimizer sometimes lost: to rows in 8 of 120
 runs (by at most 0.4%, because the rows start is a converted layout), and to
-push-apart in 2 of 180 (by up to 4.7%, because its push start used different
+push apart in 2 of 180 (by up to 4.7%, because its push start used different
 push settings than the push-apart algorithm). Fixes: the safeguard (best of the
 finished starting layouts and the search result), and `pushStart`/`rowsStart`
-settings so "start from push-apart" means exactly the push-apart algorithm as
+settings so "start from push apart" means exactly the push-apart algorithm as
 configured. After: 0 losses in 288 runs over 36 setting combinations. Effect on
 the optimizer's own quality was neutral (0.6501 → 0.6498 with the default start;
 mixed 0.6425 → 0.6448).
@@ -375,37 +386,18 @@ distance from home; the other columns are averages over random desktops:
 Conclusion: it was a weights question. The user then lowered neighbor focus to
 0.5 and keep relations to 1, and raised stay in place to 2 (current defaults).
 
-### 5.10 Aimed moves
-A share of moves jump a random part of the way toward the window's "home" (its
-real center mapped into the current arrangement) instead of a random direction.
-Validated on desktops not used to design it:
-
-| windows | old, 30k moves | new, 15k | new, 30k |
-|---|---|---|---|
-| 5 | 0.6421 | 0.6427 | 0.6421 |
-| 8 | 0.8840 | 0.8763 | 0.8795 |
-| 12 | 1.1332 | 1.1549 | 1.1129 |
-| 16 | 1.4054 | 1.4224 | 1.3602 |
-| 20 | 1.6383 | 1.5876 | 1.5015 |
-| 28 | 1.9908 | 1.9187 | 1.8476 |
-
-It slightly hurt small desktops in the first experiment, so the share ramps from
-0 at 6 windows to 25% at 14 (`INTERNAL.AIM_*`).
+### 5.10 Aimed moves (removed)
+The simulated annealing search (before 5.20) let a share of its random moves
+jump part of the way toward the window's "home" instead of a random direction;
+on crowded desktops it gave the same quality with 2-4× fewer moves. Gradient
+descent has no random moves, so it went with the annealing.
 
 ### 5.11 Performance
-About 400 ns per optimizer move (8 windows) after caching pair values (overlap
-and relation per pair, updated only on accepted moves) and multiplicative
-cooling (1.4× faster, same quality). Profile: 57% the move itself (pair checks),
-22% rescoring, 8% random numbers; no single waste left (for the polish, see
-5.18). Effort vs quality: up to about 6 windows quality saturates near 15k
-moves; from 8 windows up it keeps improving to 60k (at 24 windows, 30k is 4.5%
-worse than 60k). Default effort is 10k (user's choice), with the cache making
-recomputation rare. Rechecked after 5.18 (40 random desktops per window count,
-2560×1440, against 10k): 20k / 50k / 100k improve the mean score by at most
-1.3% / 2.7% / 3.1%, and make 3-48% of desktops (most at 8-12 windows) more than
-3% better, a few by 12-22%; each doubling helps less and doubles the time. 10k
-stays the default (user's decision); users with few windows or a fast PC can
-raise it.
+One descent step moves every window and checks every pair, so a step costs
+about n² pair operations. Default effort is 1000 steps shared by the starts
+(the old default of 10k annealing moves was the same order of work at 10
+windows). Time per layout, quality and effort: 5.20. The cache makes
+recomputation rare (5.12).
 
 ### 5.12 Cache
 Last layout per slot (monitor and workspace), exact match on window ids and
@@ -419,7 +411,7 @@ practically free.
 Mint's slider widget (python3-xapp `SettingsWidgets.Range`) installs its own
 scroll handler that changes the value and swallows the event, so scrolling the
 window over a slider changes it. This can't be switched off from the schema.
-Fix: short pages (six now, at most 9 settings each, and settings that don't
+Fix: short pages (five now, at most 9 settings each, and settings that don't
 apply are hidden with `dependency`). The dialog allows only one condition per
 setting, but sections can have their own: each view tab therefore has its Enable
 switch in one section and everything else in a section hidden while the switch
@@ -504,7 +496,7 @@ Changes, all exact (identical layouts, scores and diagnostics, bit for bit):
   are skipped while nothing overlaps (they are exactly 0); a thumbnail whose
   scan found nothing is not scanned again until something else moves.
 * Direction relations are kept as row-wise typed arrays with one formula
-  (`dirPen`), read directly by the polish and by the search moves.
+  (`dirPen`), read directly by the polish and by the search.
 * Safeguard: it reuses the push-apart and ordered-rows layouts the search built
   as starting points, and skips a candidate's polish when a lower bound on its
   polished score (`polishLowerBound`: the size terms, which polishing can't
@@ -522,7 +514,8 @@ overlaps and the order method): no difference. Every new code path was taken
 | optimizer | 4.1 → 3.7 | 7.4 → 5.8 | 8.0 → 4.9 | 17.3 → 8.3 | 34.3 → 14.6 |
 | push apart | 0.13 → 0.05 | 0.47 → 0.13 | 1.37 → 0.33 | 4.2 → 0.9 | 6.8 → 1.6 |
 
-The search moves are now about 70% of the optimizer's time at 30 windows.
+The search (then simulated annealing, 5.20) was then about 70% of the
+optimizer's time at 30 windows.
 Confirmed in Cinnamon on the target system (section 6.2): the same scores as the
 previous engine for the same windows, and faster.
 
@@ -539,16 +532,94 @@ worth it after the exact changes (user's decision).
 
 ### 5.19 No time budget; the user sets the effort
 Considered: limiting the optimizer's time. A wall-clock stop would break
-determinism and cut the cooling schedule short. Setting the number of moves from
-the window count instead would work: a move costs a fixed part plus a part per
-window (Node: about 0.22 + 0.039 × n µs), so moves = effort × (8 + 5.6) /
-(n + 5.6) keeps the search's time about that of 8 windows. Rejected (user's
-decision): the user knows their PC and how many windows they typically have,
-and sets the effort. The settings window shows it in thousands of moves
-(`anneal-effort`; the extension multiplies by 1000, the unit in its
-SETTINGS_MAP), and its tooltip says to lower it if opening the views gets
-choppy. The new key name means an old setting stored in moves is not read as
-thousands; it falls back to the default.
+determinism and cut the search's schedule short. Setting the effort from the
+window count instead would work (a step's cost grows with the number of
+windows). Rejected (user's decision): the user knows their PC and how many
+windows they typically have, and sets the effort. The settings window shows it
+as a plain number from 1 to 100 (`optimizer-effort`, default 10; the extension
+multiplies by 100 descent steps, the unit in its SETTINGS_MAP), and its tooltip
+says to lower it if opening the views gets choppy.
+
+### 5.20 Optimizer: gradient descent instead of simulated annealing
+The optimizer used to be simulated annealing: random moves of one window at a
+time, worse moves accepted early on. Measured against the best layout any
+method found for each desktop, it was often far off on crowded desktops: from
+12 windows up, most desktops ended 10-20% worse, and 5× the effort helped
+little. Cause: in a tight arrangement, it can only shrink (bigger thumbnails)
+if many windows move together; every single-window move toward that runs into
+a neighbor and is rejected.
+
+Now: gradient descent (Adam) on all windows at once, on a smoothed copy of the
+score (the box's sides and the size term's corner at the max scale are rounded
+so the descent can follow them). The overlap penalty starts at 3 and grows to
+300 over the schedule, so the arrangement first contracts through overlaps and
+then separates (as in analytical chip placement); the step size shrinks from
+`firstStep` (0.3 of the average window size) to 0.0002. One start per starting
+layout (push apart, ordered rows, equal grid, real positions), racing (5.3);
+then the unchanged cleanup, gap enforcement, polish and safeguard. Nothing is
+random with up to four starts, so the result doesn't depend on the seed.
+
+Evidence: 294 desktops of 3-30 windows (random sizes on 2560×1440, mixed sizes
+on 1920×1080, small windows on 2560×1440); the old optimizer at 5k and 10k moves
+with 3 seeds and at 50k with one, the new one at the equivalent 500, 1000 and
+5000 steps. Gap = how much worse than
+the best score any run found for that desktop (worst seed for the old one);
+median time in Node on a server:
+
+| windows | old 10k: >10% / mean gap / ms | new 1000 steps | new 500 steps |
+|---|---|---|---|
+| 3 | 0 / 0.2% / 2.2 | 0 / 0.1% / 0.6 | 0 / 0.1% / 0.4 |
+| 5 | 2 / 1.8% / 2.8 | 0 / 1.3% / 0.9 | 0 / 1.3% / 0.5 |
+| 8 | 9 / 6.5% / 3.7 | 3 / 2.2% / 1.4 | 2 / 1.8% / 0.9 |
+| 12 | 15 / 8.9% / 5.0 | 1 / 1.3% / 2.4 | 1 / 1.7% / 1.5 |
+| 16 | 32 / 18.2% / 6.4 | 0 / 1.0% / 3.5 | 0 / 1.7% / 2.2 |
+| 21 | 38 / 20.7% / 8.1 | 1 / 1.5% / 5.0 | 2 / 2.5% / 2.9 |
+| 30 | 32 / 17.5% / 11.7 | 0 / 1.3% / 9.2 | 0 / 1.8% / 5.7 |
+| all 294 | 128 / 10.5% | 5 / 1.3% | 5 / 1.6% |
+
+(">10%": desktops more than 10% worse than the best; 42 per row.) The old
+optimizer at 50k moves still had 63 desktops more than 10% off. With few
+windows nothing changes; from 12 windows up the new one finds bigger
+thumbnails, with better relations and a little more movement (40 random
+desktops per row, default settings; size / movement / relations parts of the
+score, and the share of the screen the thumbnails cover):
+
+| windows | old | new |
+|---|---|---|
+| 3 | 0.43 / 0.23 / 0.03, 36% | 0.44 / 0.22 / 0.03, 36% |
+| 8 | 1.24 / 0.41 / 0.20, 67% | 1.25 / 0.41 / 0.19, 67% |
+| 12 | 2.16 / 0.40 / 0.25, 67% | 2.00 / 0.42 / 0.23, 73% |
+| 21 | 3.52 / 0.37 / 0.27, 62% | 3.12 / 0.42 / 0.20, 75% |
+| 30 | 4.34 / 0.36 / 0.29, 60% | 3.87 / 0.41 / 0.20, 76% |
+
+Default effort: 1000 steps. 500 takes 0.6 of the time with a mean gap of 1.6%
+instead of 1.3%, the difference being from 12 windows up. The push-apart,
+ordered-rows and
+equal-grid layouts are unchanged (identical on all 294 desktops).
+
+Also tried (two independent studies), not adopted: tuning the annealing
+(temperature, starts, cooling, move size, aimed moves) and other move kinds
+(swaps, one axis, jumps next to a neighbor): no gain or worse. Gradient
+refinement after the annealing: 2-3% better, far less than replacing it.
+Annealing followed by a relocation search (each window in turn moved to where
+the compacted arrangement is smallest): clearly better than annealing alone,
+but behind gradient descent from 12 windows up, and much more code. A size term
+that charged thumbnails held at the max scale for uneven sizes, with extra steps
+to steer the descent back below the limit: made obsolete by 5.4.
+
+Settings: only the effort remains in the extension's settings window. Starts,
+first checkpoint, step size (was temperature), start from, seed, dropping weak
+starts and polish are fixed; the lab keeps them. Without polish, the mean gap
+was 3.3% instead of 1.4% (3.2% instead of 0.7% at 3-5 windows) and 27 desktops
+instead of 7 were more than 10% from the best, for about 12% of the time, so it
+is always on.
+
+Push apart's pass limit ("Effort (passes)", default 1000) left the settings
+window too: push apart stops as soon as nothing overlaps, and on the same 294
+desktops it used at most 226 passes (30 windows; median 15 at 3 windows, 136 at
+30) and never reached the limit. Raising it changes nothing; lowering it below
+what a desktop needs only leaves overlaps for the cruder final cleanup. It
+stays in the engine as a safety limit, and in the lab.
 
 
 ## 6. Verified facts about Cinnamon 6.0.5
@@ -636,10 +707,17 @@ Via the diagnostics log:
   decorations are added to margin and gap automatically, the Show all windows
   defaults are small (16 / 8).
 * Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
-* First computation, optimizer (Ryzen 9 5900X, 2026-11-13): 2 windows 4-16 ms,
-  4 windows 5-11 ms, 8 windows 8-12 ms (before 5.18: 4 windows 12-15 ms, 8
-  windows 13-17 ms); 21 windows 22-24 ms. Earlier, before the engine's
-  speed-ups: about 22 ms for 6 windows. Cache hits: about 0.2 ms.
+* First computation, optimizer, Show all windows (Ryzen 9 5900X, 2026-11-13):
+  1 window 0.2-0.5 ms, 2-3 windows 2.4-6.3 ms (the highest is the first layout
+  of an opening, see below), 8 windows 4.3-4.9 ms, 20 windows 8.8-10.5 ms.
+  Before 5.20 (simulated annealing): 8 windows 8-12 ms, 21 windows 22-24 ms;
+  before 5.18: 8 windows 13-17 ms. Cache hits: about 0.2 ms.
+* Show all workspaces, caching off, same windows: the optimizer varied far more
+  than in Show all windows (8 windows 2.9-20.9 ms, 20 windows 33.7 ms), the
+  equal grid 0.1-1.8 ms. The engine does the same work in both views (in Node,
+  Expo's settings and smaller areas take as long as Scale's), and the fastest
+  Expo runs match Scale's, so the extra time is Cinnamon's, while the view
+  animates; not pursued further.
 * Margins at 0 in both views: no window title or close button is cut off at the
   screen edge (checked 2026-11-13; a review had calculated that titles might
   overhang).

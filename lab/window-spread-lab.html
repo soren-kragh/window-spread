@@ -348,7 +348,7 @@ let targets = null;                    // id -> thumbnail rect of the selected a
 const P = { ...SpreadLayout.DEFAULTS.common, ...SpreadLayout.DEFAULTS.scoring, ...LAB_DEFAULTS };
 if (matchMedia("(prefers-reduced-motion: reduce)").matches) P.duration = 0;
 const algoParams = Object.fromEntries(SpreadLayout.ALGORITHMS.map(k => [k, { ...SpreadLayout.DEFAULTS[k] }]));
-let algo = "anneal"; // algorithm selected when the page opens
+let algo = "optimizer"; // algorithm selected when the page opens
 
 /* --------------------------------------------------------------------------
    L2. SETTINGS PANEL METADATA
@@ -358,42 +358,42 @@ let algo = "anneal"; // algorithm selected when the page opens
    options, unit, kfmt (show thousands as "k"), zero (label for 0), showIf (only
    shown when true), uniformOnly (hidden for the equal grid), info (help text).
    -------------------------------------------------------------------------- */
-const START_NAMES = { push: "push-apart", rows: "ordered rows", grid: "equal grid", none: "real positions" };
+const START_NAMES = { push: "push apart", rows: "ordered rows", grid: "equal grid", none: "real positions" };
 const POLISH_INFO = "After the layout is done, tries moving each thumbnail a little in eight directions, with ever smaller steps, and keeps only moves that improve the score. A thumbnail only moves into free space: it never gets closer to a neighbor than the gap setting, never overlaps, and never leaves the screen area. This removes leftover slack, such as a window that could obviously sit closer to where it really is.";
 
 const ALGO_UI = { // order here = order in the menu
-  natural: {
-    name: "Push apart (natural)",
+  push: {
+    name: "Push apart",
     desc: "Starts every window at its real position and size, pushes overlapping pairs apart until nothing overlaps, then shrinks the whole arrangement uniformly to fit the screen. Fast and simple; it doesn't use the scoring weights except in the optional polish.",
     params: [
-      { k: "iterations", label: "Effort", min: 10, max: 5000, step: 10,
+      { k: "passes", label: "Effort (passes)", min: 10, max: 5000, step: 10,
         info: "The most passes the algorithm may make. In each pass, every overlapping pair of windows is nudged apart. It stops early as soon as nothing overlaps, so this only matters for crowded desktops. If the limit is hit, some thumbnails may still overlap (see Overlaps)." },
-      { k: "step", label: "Push strength", min: 0.05, max: 1, step: 0.05,
+      { k: "strength", label: "Push strength", min: 0.05, max: 1, step: 0.05,
         info: "How far each nudge moves an overlapping pair, as a fraction of the distance needed to separate them. Low values take many small steps and tend to keep the arrangement closer to the original. High values finish in fewer passes but can push windows further than necessary." },
-      { k: "aspect", label: "Screen shape", min: 0, max: 1, step: 0.05,
+      { k: "matchShape", label: "Match screen shape", min: 0, max: 1, step: 0.05,
         info: "The screen is wide, but windows pushed apart often spread into a tall or square cluster, which then has to be shrunk a lot to fit. This biases the pushes sideways while the cluster is too tall, and vertically while it is too wide. At 0, windows are pushed purely along the line between their centers, which keeps relative positions best." },
       { k: "polish", label: "Polish", type: "check", info: POLISH_INFO }
     ]
   },
-  anneal: {
-    name: "Optimizer (simulated annealing)",
-    desc: "Searches with random moves for the arrangement with the best score, as defined in the Scoring section. Several starts race each other and the weakest are dropped along the way. Never scores worse than push-apart or ordered rows with their current settings, as long as it starts from them (or from Mixed) and gap filling is off.",
+  optimizer: {
+    name: "Optimizer",
+    desc: "Searches by gradient descent for the arrangement with the best score, as defined in the Scoring section. Several starts race each other and the weakest are dropped along the way. Never scores worse than push-apart or ordered rows with their current settings, as long as it starts from them (or from Mixed) and gap filling is off.",
     params: [
-      { k: "iterations", label: "Effort", min: 1000, max: 200000, step: 1000, kfmt: true,
-        info: "How many random moves the search tries in total, shared among all parallel starts. Each move nudges one window. Moves that improve the score are kept; worse ones are sometimes kept early on, so the search can escape dead ends. More moves give better layouts but take longer (see Time)." },
-      { k: "restarts", label: "Parallel starts", min: 1, max: 16, step: 1,
-        info: "How many independent searches run side by side, each with its own random moves. A single search can settle into a poor arrangement just by luck; with several, the best one wins. The total effort stays the same, so more starts means fewer moves each unless weak starts are dropped early." },
+      { k: "steps", label: "Effort", min: 100, max: 20000, step: 100, kfmt: true,
+        info: "How many descent steps the search takes in total, shared among all parallel starts. In each step every window moves a little in the direction that lowers the score; early on, overlaps are only mildly penalized, so the arrangement can contract and rearrange before it is pushed apart. More steps give better layouts but take longer (see Time)." },
+      { k: "starts", label: "Parallel starts", min: 1, max: 16, step: 1,
+        info: "How many independent searches run side by side. A single search can settle into a poor arrangement; with several, the best one wins. Beyond one per starting point, starts are shaken randomly so they differ. The total effort stays the same, so more starts means fewer steps each unless weak starts are dropped early." },
       { k: "checkpoint", label: "First checkpoint", min: 0.05, max: 0.95, step: 0.05,
-        info: "How far through the cooling (0 is the start, 1 the end) the starts run before the first round of dropping. Later checkpoints judge the starts more reliably, because early on the search is still hot and scores say little about where it will end. But then more moves are spent on starts that get dropped. Later checkpoints follow evenly up to the end. Only used when dropping weak starts." },
-      { k: "temp", label: "Temperature", min: 0.005, max: 0.5, step: 0.005,
-        info: "How willing the search is to accept a worse arrangement at the start. It cools to almost nothing by the end, so the final steps only improve. Too high and the search wanders off and runs out of time to settle; too low and it barely leaves its starting arrangement." },
+        info: "How far through the search (0 is the start, 1 the end) the starts run before the first round of dropping. Later checkpoints judge the starts more reliably, because early on overlaps are still allowed and scores say little about where a start will end. But then more steps are spent on starts that get dropped. Later checkpoints follow evenly up to the end. Only used when dropping weak starts." },
+      { k: "firstStep", label: "First step size", min: 0.02, max: 1.5, step: 0.01,
+        info: "How far windows may move per step at the start, as a fraction of the average window size. The step size shrinks to almost nothing by the end, so the final steps only fine-tune. Too large and the search wanders off and runs out of time to settle; too small and it barely leaves its starting arrangement." },
       { k: "startFrom", label: "Start from", type: "select",
-        options: [["push", "Push-apart"], ["rows", "Ordered rows"], ["grid", "Equal grid"], ["none", "Real positions"], ["mixed", "Mixed (one per start)"]],
-        info: "Where the search begins. Push-apart, Ordered rows and Equal grid begin from those layouts, using those algorithms' current settings (overlaps resolved first, since true-size windows can be too big for grid cells). Changing the push-apart or ordered-rows settings therefore also changes where the optimizer can start. Real positions begins from where the windows actually are, overlapping. Mixed gives the parallel starts different starting points in turn (push-apart, rows, grid, real positions, then again), so the race picks whichever works best for each desktop; Winning start then shows which one won. With one parallel start, Mixed means push-apart." },
+        options: [["push", "Push apart"], ["rows", "Ordered rows"], ["grid", "Equal grid"], ["none", "Real positions"], ["mixed", "Mixed (one per start)"]],
+        info: "Where the search begins. Push apart, Ordered rows and Equal grid begin from those layouts, using those algorithms' current settings (overlaps resolved first, since true-size windows can be too big for grid cells). Changing the push-apart or ordered-rows settings therefore also changes where the optimizer can start. Real positions begins from where the windows actually are, overlapping. Mixed gives the parallel starts different starting points in turn (push-apart, rows, grid, real positions, then again), so the race picks whichever works best for each desktop; Winning start then shows which one won. With one parallel start, Mixed means push-apart." },
       { k: "seed", label: "Seed", min: 1, max: 100, step: 1,
-        info: "The starting point for the random moves. The same seed with the same settings always gives the same layout. Try a few seeds to see how much the result depends on luck; if it varies a lot, add parallel starts or raise the effort." },
-      { k: "bailout", label: "Drop weak starts", type: "check",
-        info: "Runs the starts as a race. At each checkpoint, the worse half (by best score so far) is stopped and its remaining moves go to the survivors, until one is left. The effort is then focused on the promising starts. With this off, every start gets an equal share of the effort and the best result is kept. Has no effect with one start." },
+        info: "Random numbers for shaking starts beyond one per starting point (with Mixed, beyond four). The same seed with the same settings always gives the same layout; with four or fewer starts it has no effect." },
+      { k: "dropWeakStarts", label: "Drop weak starts", type: "check",
+        info: "Runs the starts as a race. At each checkpoint, the worse half (by best score so far) is stopped and its remaining steps go to the survivors, until one is left. The effort is then focused on the promising starts. With this off, every start gets an equal share of the effort and the best result is kept. Has no effect with one start." },
       { k: "polish", label: "Polish", type: "check", info: POLISH_INFO }
     ]
   },
@@ -413,31 +413,31 @@ const ALGO_UI = { // order here = order in the menu
 };
 
 const SCORING_UI = [
-  { k: "wScale", label: "Thumbnail size", min: 0, max: 5, step: 0.1,
+  { k: "wSize", label: "Thumbnail size", min: 0, max: 5, step: 0.1,
     info: "How much bigger thumbnails count. Since thumbnails share one scale, this is the same as rewarding an arrangement that fills the screen well. Its balance against the other weights decides how much shrinking you accept in exchange for windows staying in place." },
   { k: "wSizes", label: "Keep sizes", min: 0, max: 5, step: 0.1,
     info: "How much it counts against a layout when thumbnails are scaled unevenly, so their sizes no longer match the real windows' relative sizes (as set by size fidelity). The equal grid and gap filling are charged. Layouts that use one scale for everything (push-apart, ordered rows, the optimizer) are not: a thumbnail held at the max scale counts as if it had its intended size, since the limit, not the layout, stops it. Without this, a layout could look good on thumbnail size just by enlarging small windows more than big ones. Not offered in the Cinnamon extension, where it rarely changes anything; there it stays at its default." },
-  { k: "wDisp", label: "Stay in place", min: 0, max: 5, step: 0.1,
+  { k: "wPlace", label: "Stay in place", min: 0, max: 5, step: 0.1,
     info: "How much it counts against a layout when thumbnails land far from where the real windows are on screen. This is absolute position: the average distance from each window's real center to its thumbnail's center." },
-  { k: "wRel", label: "Keep relations", min: 0, max: 5, step: 0.1,
+  { k: "wRelations", label: "Keep relations", min: 0, max: 5, step: 0.1,
     info: "How much it counts against a layout when windows change how they sit relative to each other, regardless of where on screen the arrangement ends up or how much it is scaled. Set the other weights low and this high to keep the shape of your desktop while letting it move. The method below chooses how this is measured." },
-  { k: "relMode", label: "Method", type: "select",
+  { k: "relationsMethod", label: "Method", type: "select",
     options: [["order", "Order (left/right, above/below)"], ["direction", "Direction (angles)"]],
     info: "Order only checks whether one window stays left of, right of, above or below another; windows can shift freely as long as they don't swap sides. Each relation counts by how clearly it holds: two windows far apart at almost the same height are side by side, so their above/below order barely counts, and pairs that were only barely separated count less. Direction compares the exact angle from each window to every other window before and after, so a window up and to the right at 45° should stay at roughly 45°. Direction is stricter and keeps the overall shape more faithfully." },
-  { k: "relNear", label: "Neighbor focus", min: 0, max: 1, step: 0.05, showIf: s => s.relMode === "direction",
+  { k: "neighborFocus", label: "Neighbor focus", min: 0, max: 1, step: 0.05, showIf: s => s.relationsMethod === "direction",
     info: "Direction method only. At 0, every pair of windows counts equally. Higher values make nearby windows matter more than windows far apart, so local neighborhoods stay intact while relations across the screen may bend." }
 ];
 
 const COMMON_UI = [
   { k: "margin", label: "Margin", min: 0, max: 200, step: 4, unit: " px",
     info: "Empty border kept around the edge of the screen in the spread. Thumbnails are laid out inside what remains." },
-  { k: "spacing", label: "Gap", min: 0, max: 80, step: 2, unit: " px",
+  { k: "gap", label: "Gap", min: 0, max: 80, step: 2, unit: " px",
     info: "Minimum empty space between thumbnails, in screen pixels. All layouts keep at least this gap, and none adds extra space around the outer edge beyond the margin." },
   { k: "fidelity", label: "Size fidelity", min: 0, max: 1, step: 0.05, uniformOnly: true,
     info: "How strictly thumbnails keep their real sizes relative to each other. At 1, a window twice as wide as another stays twice as wide. At 0, every thumbnail gets the same area, so small windows are easier to read but the size cue is gone. At 0.5, area differences are reduced to their square root: a window with 4× the area appears with 2× the area." },
   { k: "maxScale", label: "Max scale", min: 0.2, max: 1.5, step: 0.05,
     info: "Upper limit on any thumbnail's scale. At 1, a thumbnail is never shown bigger than the real window. Above 1, windows on an uncrowded desktop may be enlarged. A window that hits the limit shrinks within its slot, which slightly breaks size fidelity; the score doesn't count that against the layout." },
-  { k: "growLimit", label: "Max growth", min: 1, max: 3, step: 0.1, uniformOnly: true, showIf: s => s.fill,
+  { k: "maxGrowth", label: "Max growth", min: 1, max: 3, step: 0.1, uniformOnly: true, showIf: s => s.fill,
     info: "The most a single thumbnail may grow while filling gaps, as a multiple of its size from the layout. It is also limited by the max scale." },
   { k: "duration", label: "Animation", min: 0, max: 1200, step: 50, unit: " ms",
     info: "How long thumbnails take to fly into place. Set it to 0 to see layout changes instantly while dragging sliders. This is a lab setting only; it doesn't affect the layout." },
@@ -459,7 +459,7 @@ const INFO = {
   compare: "When this is on, opening the spread shows all four algorithms side by side instead of just the selected one. Each panel uses that algorithm's own current settings plus the common settings, and lists its key measurements underneath.\n\nThe settings panel shows the settings of the selected algorithm (outlined). To adjust another one, pick it in the Algorithm menu; all panels update live. Click a panel to open that algorithm full size.",
   scoring: "Defines what a good layout is, as one score (lower is better). It is shared by all algorithms: the optimizer searches for the lowest score, the polish step uses it to decide which small moves help, and every layout shows its score so you can compare them fairly.\n\nThe score adds up four parts, each scaled by its weight: thumbnail size (smaller thumbnails cost more), size distortion (thumbnails scaled unevenly), movement (distance from the real position), and relations (windows changing sides or angles relative to each other). Only the balance between the weights matters.",
   common: "Settings shared by all algorithms. Some don't apply to the equal grid and are hidden while it is selected.",
-  tuner: "Searches for the optimizer settings that give the best average score: parallel starts, first checkpoint, temperature, dropping weak starts and the starting point. It runs until you stop it, and the best settings found so far appear in the sliders as soon as they're found.\n\nEvery candidate is run on the same desktops with the same six seeds, so candidates differ only in their settings, not in luck. Most candidates are small nudges to one or two settings of the current best; a quarter are completely random, to explore elsewhere. A candidate that is clearly behind the best partway through is stopped early.\n\nEffort, polish, the scoring weights and the common settings are fixed at the values they had when tuning started; more effort always wins, and the weights define what “best” means.\n\nThe test desktops (under “Test on”) can be changed while tuning, for example with “New random set”. The best settings so far carry over, are first re-scored on the new desktops, and the search continues from there. The status then shows how the settings score on the new desktops and which settings change afterwards, which tells you how sensitive the result is to the choice of desktops. Tuning on this desktop only can find settings that suit it but not others; random desktops help the result carry over. Uses one background thread per CPU core, minus one.",
+  tuner: "Searches for the optimizer settings that give the best average score: parallel starts, first checkpoint, first step size, dropping weak starts and the starting point. It runs until you stop it, and the best settings found so far appear in the sliders as soon as they're found.\n\nEvery candidate is run on the same desktops with the same six seeds, so candidates differ only in their settings, not in luck. Most candidates are small nudges to one or two settings of the current best; a quarter are completely random, to explore elsewhere. A candidate that is clearly behind the best partway through is stopped early.\n\nEffort, polish, the scoring weights and the common settings are fixed at the values they had when tuning started; more effort always wins, and the weights define what “best” means.\n\nThe test desktops (under “Test on”) can be changed while tuning, for example with “New random set”. The best settings so far carry over, are first re-scored on the new desktops, and the search continues from there. The status then shows how the settings score on the new desktops and which settings change afterwards, which tells you how sensitive the result is to the choice of desktops. Tuning on this desktop only can find settings that suit it but not others; random desktops help the result carry over. Uses one background thread per CPU core, minus one.",
   "stat:Score": "The overall score for this layout under the current Scoring weights; lower is better. Compare it between algorithms or settings on the same desktop. It isn't comparable after changing the weights.",
   "stat:Score parts": "The score split into its parts: the size part (grows as thumbnails get smaller), the size distortion part (thumbnails scaled unevenly), the movement part (distance from real positions) and the relations part (windows changing sides or angles relative to each other). Each is already multiplied by its weight, so they add up to the score.",
   "stat:Average scale": "Mean thumbnail size relative to the real window. 0.5 means thumbnails are on average half as wide as the real windows. Bigger is easier to recognize.",
@@ -470,10 +470,10 @@ const INFO = {
   "stat:Direction change": "Average change, in degrees, of the angle from one window's center to another's, over all pairs. 0° means the shape of the arrangement is perfectly kept, only scaled and moved. This is stricter than Relations kept.",
   "stat:Overlapping pairs": "Number of thumbnail pairs that overlap. It should be 0; anything else means an algorithm stopped before finishing, so raise its effort.",
   "stat:Compute time": "How long the layout took in this browser. To feel instant on a real desktop it should stay well under about 30 ms.",
-  "stat:Iterations used": "How many push-apart passes were needed until nothing overlapped.",
+  "stat:Passes used": "How many push-apart passes were needed until nothing overlapped.",
   "stat:Winning start": "Which of the parallel starts produced the final layout.",
   "stat:Starts per round": "How many starts were still running in each round of the race. After each round, the worse half is dropped.",
-  "stat:Moves accepted": "Share of random moves the optimizer kept. Very high suggests the temperature is too high to settle; very low means it is barely exploring.",
+  "stat:Descent steps per start": "How many descent steps each start's schedule has; starts dropped early ran only part of it.",
   "stat:Polish": "How many small improving moves the final polish made, and how much it lowered the score.",
   "stat:Result": "Whether the final layout came from the search, or whether one of the layouts it started from (push-apart or ordered rows, with those algorithms' current settings) scored better after the same final steps and was kept instead. This guarantees the optimizer never scores worse than those algorithms."
 };
@@ -556,7 +556,7 @@ function renderAlgoUI() {
   TUNER_BOX.remove();
   const algoBox = document.getElementById("algoParams");
   buildParams(algoBox, ALGO_UI[algo].params, algoParams[algo], SETTINGS_EVENTS);
-  if (algo === "anneal") { algoBox.appendChild(TUNER_BOX); TUNER_BOX.hidden = false; }
+  if (algo === "optimizer") { algoBox.appendChild(TUNER_BOX); TUNER_BOX.hidden = false; }
   buildParams(document.getElementById("scoreParams"), SCORING_UI, P, SETTINGS_EVENTS);
   buildParams(document.getElementById("commonParams"), COMMON_UI, P, { ...SETTINGS_EVENTS, hideUniformOnly: algo === "grid" });
 }
@@ -580,8 +580,8 @@ document.getElementById("reset").addEventListener("click", resetSettings);
 // optimizer also gets the push-apart and ordered-rows settings for the layouts it starts
 // from, so it is guaranteed to do at least as well as those algorithms as configured here.
 function settingsFor(key) {
-  const extra = key !== "anneal" ? {} : {
-    pushStart: { iterations: algoParams.natural.iterations, step: algoParams.natural.step, aspect: algoParams.natural.aspect, polish: algoParams.natural.polish },
+  const extra = key !== "optimizer" ? {} : {
+    pushStart: { passes: algoParams.push.passes, strength: algoParams.push.strength, matchShape: algoParams.push.matchShape, polish: algoParams.push.polish },
     rowsStart: { rows: algoParams.rows.rows }
   };
   return SpreadLayout.settings(key, { ...P, ...algoParams[key], ...extra });
@@ -620,18 +620,18 @@ function recompute() {
 // Engine diagnostics as display rows.
 function describeInfo(key, info) {
   const rows = [];
-  if (key === "natural" && info.iterations !== undefined)
-    rows.push(["Iterations used", info.hitLimit ? `${info.iterations} (hit limit)` : `${info.iterations}`]);
-  if (key === "anneal" && info.starts !== undefined) {
-    const a = algoParams.anneal;
+  if (key === "push" && info.passes !== undefined)
+    rows.push(["Passes used", info.hitLimit ? `${info.passes} (hit limit)` : `${info.passes}`]);
+  if (key === "optimizer" && info.starts !== undefined) {
+    const a = algoParams.optimizer;
     if (info.starts > 1) {
       rows.push(["Winning start", `${info.winningStart} of ${info.starts}` + (a.startFrom === "mixed" ? `, from ${START_NAMES[info.winningKind]}` : "")]);
-      if (a.bailout) rows.push(["Starts per round", info.startsPerRound.join(" → ")]);
+      if (a.dropWeakStarts) rows.push(["Starts per round", info.startsPerRound.join(" → ")]);
     }
-    rows.push(["Moves accepted", `${(100 * info.acceptRate).toFixed(1)}%`]);
+    rows.push(["Descent steps per start", `${info.stepsPerStart}`]);
   }
   if (info.polishMoves !== undefined) rows.push(["Polish", `${info.polishMoves} moves, score −${info.polishGain.toFixed(4)}`]);
-  if (key === "anneal" && info.keptStart !== undefined)
+  if (key === "optimizer" && info.keptStart !== undefined)
     rows.push(["Result", info.keptStart ? `kept the ${START_NAMES[info.keptStart]} starting layout, the search found nothing better` : "found by the search"]);
   return rows;
 }
@@ -694,8 +694,8 @@ function showStats(res) {
   item("Score", sc.total.toFixed(3), "Score", "score");
   item("from size", sc.size.toFixed(3), "Score parts");
   item("size distortion", sc.sizes.toFixed(3), "Score parts");
-  item("movement", sc.move.toFixed(3), "Score parts");
-  item("relations", sc.rel.toFixed(3), "Score parts");
+  item("movement", sc.movement.toFixed(3), "Score parts");
+  item("relations", sc.relations.toFixed(3), "Score parts");
   if (sc.overlap > 1e-4) item("overlap", sc.overlap.toFixed(3), "Score parts");
   for (const [k, v] of computeStats(res)) item(k, String(v), k);
 }
@@ -912,7 +912,7 @@ function* evaluateCandidate(msg) {
   let sum = 0, bestSum = 0;
   for (let si = 0; si < seeds.length; si++) {
     for (const ws of desktops) {
-      const v = SpreadLayout.compute(ws, screen, "anneal", { ...settings, seed: seeds[si] }).score.total;
+      const v = SpreadLayout.compute(ws, screen, "optimizer", { ...settings, seed: seeds[si] }).score.total;
       if (bestRuns) bestSum += bestRuns[runs.length];
       runs.push(v); sum += v;
       yield;
@@ -927,10 +927,10 @@ function* evaluateCandidate(msg) {
 
 // Settings the tuner explores, with their ranges.
 const TUNE = [
-  { k: "restarts", min: 1, max: 16, step: 1 },
+  { k: "starts", min: 1, max: 16, step: 1 },
   { k: "checkpoint", min: 0.05, max: 0.95, step: 0.05 },
-  { k: "temp", min: 0.005, max: 0.5, step: 0.005, log: true },
-  { k: "bailout", bool: true },
+  { k: "firstStep", min: 0.02, max: 1.5, step: 0.01, log: true },
+  { k: "dropWeakStarts", bool: true },
   { k: "startFrom", options: ["push", "rows", "grid", "none", "mixed"] }
 ];
 const TUNE_SEEDS = [1, 2, 3, 4, 5, 6];
@@ -1070,9 +1070,9 @@ function makeWorkers() {
   }
 }
 
-function tuneLabel(key) { const p = ALGO_UI.anneal.params.find(q => q.k === key); return p ? p.label : key; }
+function tuneLabel(key) { const p = ALGO_UI.optimizer.params.find(q => q.k === key); return p ? p.label : key; }
 function tuneValue(key, v) {
-  const p = ALGO_UI.anneal.params.find(q => q.k === key);
+  const p = ALGO_UI.optimizer.params.find(q => q.k === key);
   if (typeof v === "boolean") return v ? "on" : "off";
   if (p && p.type === "select") { const o = p.options.find(q => q[0] === v); return o ? o[1] : String(v); }
   return p ? fmt(p, v) : String(v);
@@ -1108,8 +1108,8 @@ function onResult(worker, res) {
     if (job.baseline) tuner.baseline = res.mean;
     if (!tuner.best || res.mean < tuner.best.mean - 1e-12) {
       tuner.best = { settings: job.settings, runs: res.runs, mean: res.mean };
-      Object.assign(algoParams.anneal, job.settings);
-      if (algo === "anneal") renderAlgoUI();
+      Object.assign(algoParams.optimizer, job.settings);
+      if (algo === "optimizer") renderAlgoUI();
       changed();
     }
   }
@@ -1120,11 +1120,11 @@ function onResult(worker, res) {
 function startTuning() {
   const desktops = tuneDesktops();
   if (!desktops.length) { tuneStatus.textContent = "Nothing to test on: add windows to this desktop, or set some random desktops under “Test on”."; return; }
-  const current = Object.fromEntries(TUNE.map(d => [d.k, algoParams.anneal[d.k]]));
+  const current = Object.fromEntries(TUNE.map(d => [d.k, algoParams.optimizer[d.k]]));
   Object.assign(tuner, { running: true, best: null, baseline: null, baselineSent: false, tested: 0, stopped: 0,
     keys: new Set(), pending: new Map(), revertable: false, generation: 0, switched: null,
     original: { ...current }, startSettings: { ...current }, setLabel: tuneDescription(),
-    snapshot: settingsFor("anneal"), setup: { desktops, seeds: TUNE_SEEDS } });
+    snapshot: settingsFor("optimizer"), setup: { desktops, seeds: TUNE_SEEDS } });
   spawnWorkers();
   tuneBtn.textContent = "Stop tuning"; tuneBtn.classList.add("on");
   updateTuneStatus();
@@ -1150,7 +1150,7 @@ function stopTuning() {
   tuner.running = false;
   for (const w of tuner.workers) w.terminate();
   tuner.workers = [];
-  const now = Object.fromEntries(TUNE.map(d => [d.k, algoParams.anneal[d.k]]));
+  const now = Object.fromEntries(TUNE.map(d => [d.k, algoParams.optimizer[d.k]]));
   tuner.revertable = !!tuner.original && tuneKey(now) !== tuneKey(tuner.original);
   tuneBtn.textContent = "Start tuning"; tuneBtn.classList.remove("on");
   updateTuneStatus();
@@ -1176,8 +1176,8 @@ function updateTuneStatus() {
   if (!tuner.running && tuner.revertable) {
     const b = document.createElement("button"); b.className = "b small"; b.textContent = "Revert to settings before tuning";
     b.addEventListener("click", () => {
-      Object.assign(algoParams.anneal, tuner.original); tuner.revertable = false;
-      if (algo === "anneal") renderAlgoUI();
+      Object.assign(algoParams.optimizer, tuner.original); tuner.revertable = false;
+      if (algo === "optimizer") renderAlgoUI();
       changed(); updateTuneStatus();
     });
     tuneStatus.appendChild(b);

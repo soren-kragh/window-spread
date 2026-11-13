@@ -34,7 +34,7 @@ async function run() {
   w.addEventListener('error', e => errors.push(e.message));
   const SL = w.SpreadLayout;
   ok('the engine loads from the extension folder (no copy in the page)', typeof SL === 'object' && fs.readFileSync(LAB, 'utf8').indexOf('function createSpreadLayout') < 0);
-  ok('opens with the optimizer selected', d.getElementById('algo').value === 'anneal');
+  ok('opens with the optimizer selected', d.getElementById('algo').value === 'optimizer');
   const stat = name => { const it = [].slice.call(d.querySelectorAll('#statsbar .it')).filter(e => e.textContent.indexOf(name) === 0)[0]; return it ? it.querySelector('b').textContent : null; };
   const layout = () => JSON.stringify(Array.from(w.eval('targets').values()).sort((a, b) => a.id - b.id));
 
@@ -60,8 +60,8 @@ async function run() {
 
   [].slice.call(d.querySelectorAll('aside input[type=range]')).forEach(r => { r.value = r.min; r.dispatchEvent(new w.Event('input')); });
   d.getElementById('reset').click();
-  ok('"Reset settings" restores the engine\'s defaults', w.eval('P.margin') === SL.DEFAULTS.common.margin && w.eval('P.wScale') === SL.DEFAULTS.scoring.wScale &&
-    w.eval('algoParams.anneal.iterations') === SL.DEFAULTS.anneal.iterations);
+  ok('"Reset settings" restores the engine\'s defaults', w.eval('P.margin') === SL.DEFAULTS.common.margin && w.eval('P.wSize') === SL.DEFAULTS.scoring.wSize &&
+    w.eval('algoParams.optimizer.steps') === SL.DEFAULTS.optimizer.steps);
 
   // the tuner's worker code: the engine rebuilt from its factory, plus the evaluator
   let workerOk = false;
@@ -70,8 +70,8 @@ async function run() {
     const src = w.eval('workerSource()');
     const shim = "const { parentPort } = require('worker_threads'); globalThis.postMessage = m => parentPort.postMessage(m);\n" + src +
       "\nparentPort.on('message', m => onmessage({ data: m }));";
-    const msg = JSON.parse(JSON.stringify({ id: 1, settings: w.eval('settingsFor("anneal")'), desktops: w.eval('tuneDesktops()').slice(0, 2), seeds: [1], bestRuns: null, screen: w.eval('SCREEN') }));
-    msg.settings.iterations = 2000;
+    const msg = JSON.parse(JSON.stringify({ id: 1, settings: w.eval('settingsFor("optimizer")'), desktops: w.eval('tuneDesktops()').slice(0, 2), seeds: [1], bestRuns: null, screen: w.eval('SCREEN') }));
+    msg.settings.steps = 200;
     const res = await new Promise((resolve, reject) => {
       const wk = new Worker(shim, { eval: true });
       wk.on('message', m => { wk.terminate(); resolve(m); }); wk.on('error', reject);

@@ -6,8 +6,7 @@
       "page-layout",
       "page-expo",
       "page-scoring",
-      "page-optimizer",
-      "page-push"
+      "page-algorithms"
     ],
     "page-general": {
       "type": "page",
@@ -39,18 +38,12 @@
         "sec-scoring"
       ]
     },
-    "page-optimizer": {
+    "page-algorithms": {
       "type": "page",
-      "title": "Optimizer",
+      "title": "Algorithms",
       "sections": [
-        "sec-optimizer"
-      ]
-    },
-    "page-push": {
-      "type": "page",
-      "title": "Push-apart & rows",
-      "sections": [
-        "sec-natural",
+        "sec-optimizer",
+        "sec-push",
         "sec-rows"
       ]
     },
@@ -76,47 +69,39 @@
       "keys": [
         "algorithm",
         "margin",
-        "spacing",
+        "gap",
         "fidelity",
         "max-scale",
         "centered",
         "fill",
-        "grow-limit"
+        "max-growth"
       ]
     },
     "sec-scoring": {
       "type": "section",
       "title": "What makes a good layout",
       "keys": [
-        "w-scale",
-        "w-disp",
-        "w-rel",
-        "rel-mode",
-        "rel-near"
+        "w-size",
+        "w-place",
+        "w-relations",
+        "relations-method",
+        "neighbor-focus"
       ]
     },
     "sec-optimizer": {
       "type": "section",
-      "title": "Optimizer settings",
+      "title": "Optimizer",
       "keys": [
-        "anneal-effort",
-        "anneal-restarts",
-        "anneal-checkpoint",
-        "anneal-temp",
-        "anneal-start-from",
-        "anneal-seed",
-        "anneal-bailout",
-        "anneal-polish"
+        "optimizer-effort"
       ]
     },
-    "sec-natural": {
+    "sec-push": {
       "type": "section",
-      "title": "Push-apart (also a starting point for the optimizer)",
+      "title": "Push apart (also a starting point for the optimizer)",
       "keys": [
-        "natural-iterations",
-        "natural-step",
-        "natural-aspect",
-        "natural-polish"
+        "push-strength",
+        "push-match-shape",
+        "push-polish"
       ]
     },
     "sec-rows": {
@@ -140,26 +125,26 @@
       "keys": [
         "expo-algorithm",
         "expo-margin",
-        "expo-spacing",
+        "expo-gap",
         "expo-fidelity",
         "expo-max-scale",
         "expo-centered",
         "expo-fill",
-        "expo-grow-limit"
+        "expo-max-growth"
       ]
     }
   },
   "algorithm": {
     "type": "combobox",
-    "default": "anneal",
+    "default": "optimizer",
     "description": "Layout algorithm",
     "options": {
-      "Optimizer": "anneal",
-      "Push apart": "natural",
+      "Optimizer": "optimizer",
+      "Push apart": "push",
       "Ordered rows": "rows",
       "Equal grid": "grid"
     },
-    "tooltip": "How thumbnails are arranged. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: a few tens of milliseconds when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast."
+    "tooltip": "How thumbnails are arranged. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: from a few milliseconds up to a few tens with many windows, when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast."
   },
   "use-cache": {
     "type": "switch",
@@ -183,7 +168,7 @@
     "description": "Margin around the screen edge",
     "tooltip": "Empty border kept around the edge of the screen."
   },
-  "spacing": {
+  "gap": {
     "type": "spinbutton",
     "default": 8,
     "min": 0,
@@ -226,7 +211,7 @@
     "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.",
     "dependency": "algorithm!=grid"
   },
-  "grow-limit": {
+  "max-growth": {
     "type": "scale",
     "default": 1.5,
     "min": 1,
@@ -236,7 +221,7 @@
     "tooltip": "The most a thumbnail may grow while filling gaps.",
     "dependency": "fill"
   },
-  "w-scale": {
+  "w-size": {
     "type": "scale",
     "default": 4,
     "min": 0,
@@ -245,7 +230,7 @@
     "description": "Thumbnail size",
     "tooltip": "How much bigger thumbnails count."
   },
-  "w-disp": {
+  "w-place": {
     "type": "scale",
     "default": 2,
     "min": 0,
@@ -254,7 +239,7 @@
     "description": "Stay in place",
     "tooltip": "Penalty for thumbnails far from where their real window is."
   },
-  "w-rel": {
+  "w-relations": {
     "type": "scale",
     "default": 1,
     "min": 0,
@@ -263,7 +248,7 @@
     "description": "Keep relations",
     "tooltip": "Penalty for windows changing how they sit relative to each other."
   },
-  "rel-mode": {
+  "relations-method": {
     "type": "combobox",
     "default": "direction",
     "description": "Relations method",
@@ -273,7 +258,7 @@
     },
     "tooltip": "Order only cares whether windows swap sides; Direction compares the angles between windows and is stricter."
   },
-  "rel-near": {
+  "neighbor-focus": {
     "type": "scale",
     "default": 0.5,
     "min": 0,
@@ -281,89 +266,18 @@
     "step": 0.05,
     "description": "Neighbor focus",
     "tooltip": "How much more nearby windows matter than distant ones.",
-    "dependency": "rel-mode=direction"
+    "dependency": "relations-method=direction"
   },
-  "anneal-effort": {
+  "optimizer-effort": {
     "type": "spinbutton",
     "default": 10,
     "min": 1,
-    "max": 200,
-    "step": 1,
-    "units": "thousand moves",
-    "description": "Effort",
-    "tooltip": "Number of moves the optimizer tries, shared by all parallel starts. More gives better layouts but takes longer, and each move takes longer the more windows there are. If opening the views gets choppy, lower this."
-  },
-  "anneal-restarts": {
-    "type": "spinbutton",
-    "default": 3,
-    "min": 1,
-    "max": 16,
-    "step": 1,
-    "description": "Parallel starts",
-    "tooltip": "Independent searches racing each other."
-  },
-  "anneal-checkpoint": {
-    "type": "scale",
-    "default": 0.2,
-    "min": 0.05,
-    "max": 0.95,
-    "step": 0.05,
-    "description": "First checkpoint",
-    "tooltip": "How far through the search the first weak starts are dropped."
-  },
-  "anneal-temp": {
-    "type": "scale",
-    "default": 0.1,
-    "min": 0.005,
-    "max": 0.5,
-    "step": 0.005,
-    "description": "Temperature",
-    "tooltip": "Willingness to accept worse arrangements early in the search."
-  },
-  "anneal-start-from": {
-    "type": "combobox",
-    "default": "mixed",
-    "description": "Start from",
-    "options": {
-      "Push-apart": "push",
-      "Ordered rows": "rows",
-      "Equal grid": "grid",
-      "Real positions": "none",
-      "Mixed (one per start)": "mixed"
-    },
-    "tooltip": "Where the search begins. Mixed gives the parallel starts different starting points."
-  },
-  "anneal-seed": {
-    "type": "spinbutton",
-    "default": 1,
-    "min": 1,
     "max": 100,
     "step": 1,
-    "description": "Random seed",
-    "tooltip": "Same seed and same windows always give the same layout."
+    "description": "Effort",
+    "tooltip": "How hard the optimizer works. More gives better layouts but takes longer, and the more windows there are, the longer it takes. If opening the views gets choppy, lower this."
   },
-  "anneal-bailout": {
-    "type": "switch",
-    "default": true,
-    "description": "Drop weak starts",
-    "tooltip": "Stops the worse half of the starts at each checkpoint, focusing effort on the promising ones."
-  },
-  "anneal-polish": {
-    "type": "switch",
-    "default": true,
-    "description": "Polish the result",
-    "tooltip": "Final small moves into free space that improve the score."
-  },
-  "natural-iterations": {
-    "type": "spinbutton",
-    "default": 1000,
-    "min": 10,
-    "max": 5000,
-    "step": 10,
-    "description": "Effort (passes)",
-    "tooltip": "Maximum push-apart passes."
-  },
-  "natural-step": {
+  "push-strength": {
     "type": "scale",
     "default": 0.3,
     "min": 0.05,
@@ -372,7 +286,7 @@
     "description": "Push strength",
     "tooltip": "How far each push moves an overlapping pair."
   },
-  "natural-aspect": {
+  "push-match-shape": {
     "type": "scale",
     "default": 0.5,
     "min": 0,
@@ -381,7 +295,7 @@
     "description": "Match screen shape",
     "tooltip": "Bias pushes toward the screen's shape."
   },
-  "natural-polish": {
+  "push-polish": {
     "type": "switch",
     "default": true,
     "description": "Polish the result",
@@ -401,15 +315,15 @@
   },
   "expo-algorithm": {
     "type": "combobox",
-    "default": "grid",
+    "default": "optimizer",
     "description": "Layout algorithm",
     "options": {
-      "Optimizer": "anneal",
-      "Push apart": "natural",
+      "Optimizer": "optimizer",
+      "Push apart": "push",
       "Ordered rows": "rows",
       "Equal grid": "grid"
     },
-    "tooltip": "How windows are arranged inside each workspace. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: a few tens of milliseconds when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast. Makes even small windows reasonably big, which helps in the small previews."
+    "tooltip": "How windows are arranged inside each workspace. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: from a few milliseconds up to a few tens with many windows, when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast. Makes even small windows reasonably big, which helps in the small previews."
   },
   "expo-margin": {
     "type": "spinbutton",
@@ -421,14 +335,14 @@
     "description": "Margin around the edge",
     "tooltip": "Empty border inside each workspace preview."
   },
-  "expo-spacing": {
+  "expo-gap": {
     "type": "spinbutton",
     "default": 14,
     "min": 0,
     "max": 80,
     "step": 2,
     "units": "px",
-    "description": "Gap between windows",
+    "description": "Gap between thumbnails",
     "tooltip": "Space between windows inside each workspace preview."
   },
   "expo-fidelity": {
@@ -464,7 +378,7 @@
     "tooltip": "Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.",
     "dependency": "expo-algorithm!=grid"
   },
-  "expo-grow-limit": {
+  "expo-max-growth": {
     "type": "scale",
     "default": 1.5,
     "min": 1,

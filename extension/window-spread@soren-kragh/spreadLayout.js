@@ -22,12 +22,12 @@
          All default settings ("knobs"), grouped as common / scoring / one group per
          algorithm. See section 1 below; this is the place to change defaults.
      SpreadLayout.ALGORITHMS
-         ["anneal", "natural", "rows", "grid"]
+         ["optimizer", "push", "rows", "grid"]
      SpreadLayout.settings(algorithm, overrides?)
          Settings object for one algorithm: common + scoring + that algorithm's defaults,
-         then `overrides` on top. For "anneal" it also contains pushStart and rowsStart:
+         then `overrides` on top. For "optimizer" it also contains pushStart and rowsStart:
          the settings of the push-apart and ordered-rows layouts it can start from
-         (defaults: DEFAULTS.natural and DEFAULTS.rows).
+         (defaults: DEFAULTS.push and DEFAULTS.rows).
      SpreadLayout.compute(windows, monitor, algorithm, settings?)
          windows    [{ id, x, y, w, h }]  real window frames: finite numbers, sizes
                     above 0. ids must be unique numbers; other fields are ignored.
@@ -37,7 +37,7 @@
          settings   flat object as returned by SpreadLayout.settings(); omitted = defaults.
          returns    { targets: [{ id, x, y, w, h, scale }],   one per window: where its
                                                              thumbnail goes; scale = w / real w
-                      score:   { total, size, sizes, move, rel, overlap },  lower is better
+                      score:   { total, size, sizes, movement, relations, overlap },  lower is better
                       info:    diagnostics, see compute() below }
      SpreadLayout.createCache()
          Optional helper that remembers the last layout per "slot" (for example one slot per
@@ -65,9 +65,9 @@
      - Only window positions and sizes are read. Stacking order and focus history are
        never used: windows are processed in an order derived from geometry alone.
      - Deterministic: the same input and settings always give the same result.
-     - Thumbnails never overlap, keep at least `spacing` px between them, and stay inside
+     - Thumbnails never overlap, keep at least `gap` px between them, and stay inside
        the monitor area minus `margin`.
-     - The optimizer ("anneal") never scores worse than the push-apart and ordered-rows
+     - The optimizer never scores worse than the push-apart and ordered-rows
        layouts, when given the same settings as those algorithms (pushStart /
        rowsStart; gap filling, if on, comes after this comparison).
      - Input it can't lay out (a non-finite number, a window or work area of size 0)
@@ -75,7 +75,7 @@
 
    Not done here (left to the caller)
      - Animation, drawing, input handling, multi-monitor assignment.
-     - A time budget: effort is a fixed number of moves (`anneal.iterations`), set
+     - A time budget: effort is a fixed number of descent steps (`optimizer.steps`), set
        by the user; see DEVELOPMENT.md 5.19.
    ========================================================================== */
 // All engine code lives inside this factory function, so that it can also be handed to
@@ -92,42 +92,43 @@ const DEFAULTS = {
   // Used by every algorithm.
   common: {
     margin: 16,        // px of empty border kept inside the monitor area
-    spacing: 8,        // px minimum gap between thumbnails
+    gap: 8,            // px minimum gap between thumbnails
     fidelity: 0.8,       // relative sizes: 1 = exact, 0 = all thumbnails same area, 0.5 = area ratios square-rooted
     maxScale: 0.9,     // largest thumbnail scale; 1 = never bigger than the real window
     centered: false,   // true: always center the arrangement; false: move it toward the real windows
     fill: false,       // afterwards, grow thumbnails into free space (makes sizes uneven)
-    growLimit: 1.5,    // fill: maximum growth factor per thumbnail
+    maxGrowth: 1.5,    // fill: maximum growth factor per thumbnail
   },
   // What a good layout is. Used by the optimizer's search, by the polish step and by score().
   // Only the balance between the weights matters.
   scoring: {
-    wScale: 4,         // reward for bigger thumbnails
+    wSize: 4,          // reward for bigger thumbnails
     wSizes: 5,         // penalty for uneven scaling (sizes no longer match the real windows)
-    wDisp: 2,          // penalty for thumbnails far from their real window
-    wRel: 1,           // penalty for windows changing how they sit relative to each other
-    relMode: "direction",  // relations measured as "order" (left/right, above/below) or "direction" (angles)
-    relNear: 0.5,      // direction mode only: 0 = all pairs count equally, 1 = nearby pairs matter most
+    wPlace: 2,         // penalty for thumbnails far from their real window
+    wRelations: 1,     // penalty for windows changing how they sit relative to each other
+    relationsMethod: "direction", // relations measured as "order" (left/right, above/below) or "direction" (angles)
+    neighborFocus: 0.5, // direction mode only: 0 = all pairs count equally, 1 = nearby pairs matter most
   },
-  // Optimizer (simulated annealing).
-  anneal: {
-    iterations: 10000, // total random moves, shared by all parallel starts (the effort / time knob)
-    restarts: 3,       // parallel starts racing each other
-    checkpoint: 0.2,   // point of the cooling schedule (0..1) where the first weak starts are dropped
-    temp: 0.1,        // starting temperature: willingness to accept worse moves early on
-    seed: 1,           // random seed; same seed + same input = same result
-    bailout: true,     // drop the worse half of the starts at each checkpoint
+  // Optimizer (gradient descent from several starts).
+  optimizer: {
+    steps: 1000,       // descent steps in total, shared by all starts (the effort / time knob);
+                       // in one step every window moves and every pair is checked
+    starts: 4,         // parallel starts racing each other
+    checkpoint: 0.2,   // point of the schedule (0..1) where the first weak starts are dropped
+    firstStep: 0.3,    // first step size (x average window size): how far windows may jump early on
+    seed: 1,           // random seed (shakes starts beyond the four kinds); same seed + same input = same result
+    dropWeakStarts: true, // drop the worse half of the starts at each checkpoint
     polish: true,      // greedy final polish
     startFrom: "mixed", // "push" | "rows" | "grid" | "none" (real positions) | "mixed" (one kind per start)
     // pushStart, rowsStart: settings of the push-apart and ordered-rows layouts the optimizer can
-    // start from. Filled in by settings() from DEFAULTS.natural and DEFAULTS.rows; pass the same
+    // start from. Filled in by settings() from DEFAULTS.push and DEFAULTS.rows; pass the same
     // values as those algorithms use, so the optimizer is guaranteed to do at least as well.
   },
-  // Push apart ("natural").
-  natural: {
-    iterations: 1000,  // maximum push-apart passes
-    step: 0.3,         // push strength per pass (fraction of the overlap)
-    aspect: 0.5,       // bias pushes toward the screen's shape (0 = straight apart)
+  // Push apart.
+  push: {
+    passes: 1000,      // maximum push-apart passes
+    strength: 0.3,     // push strength per pass (fraction of the overlap)
+    matchShape: 0.5,   // bias pushes toward the screen's shape (0 = straight apart)
     polish: true,      // greedy final polish
   },
   // Ordered rows.
@@ -144,10 +145,10 @@ const DEFAULTS = {
    changes behavior in ways the lab has not been tuned for.
    -------------------------------------------------------------------------- */
 const INTERNAL = {
-  // Push-apart (resolve)
+  // Push apart (resolve)
   PUSH_NUDGE: 0.5,                                   // px added to every push so progress never stalls
-  START_RESOLVE: { iterations: 1000, step: 0.5 },   // overlap removal for the optimizer's rows / grid starts
-  CLEANUP: { iterations: 2000, step: 0.5 },          // final overlap removal
+  START_RESOLVE: { passes: 1000, strength: 0.5 },   // overlap removal for the optimizer's rows / grid starts
+  CLEANUP: { passes: 2000, strength: 0.5 },         // final overlap removal
   // Gap handling: the gap must be chosen in unscaled units before the final scale is known.
   DENSITY_GUESS: 0.5,                                // expected share of the screen covered, for the first gap guess
   GAP_ROUNDS: 8,                                     // max rounds of widening the gap until it is right
@@ -156,14 +157,15 @@ const INTERNAL = {
   SEED_TIES: 12345, SEED_CLEANUP: 1, SEED_GAP: 7,
   // Optimizer
   START_KINDS: ["push", "rows", "grid", "none"],     // rotation used by startFrom "mixed"
-  COOL_TO: 1e-3,                                     // final temperature as a fraction of the starting temperature
-  MOVE_MIN: 0.02, MOVE_HOT: 0.5,                     // move size (fraction of average window size): cold + hot part
-  // Aimed moves: a share of moves jump a random part of the way toward the window's "home" (where
-  // its real center lands in the current arrangement) instead of a random direction. Helps a lot
-  // on crowded desktops (same quality with 2-4x fewer moves at 16-24 windows), slightly hurts on
-  // small ones, so the share ramps from 0 at AIM_FROM_N windows to AIM_SHARE at AIM_FULL_N.
-  AIM_SHARE: 0.25, AIM_FROM_N: 6, AIM_FULL_N: 14, AIM_JITTER: 0.3,
-  CHAIN_SEED_A: 7919, CHAIN_SEED_B: 104729,          // per-start random seeds: seed * A + start * B
+  // Descent
+  GD_STEP_END: 0.0002,                               // last step size (x avg window size); the first is S.firstStep
+  GD_MU_START: 3, GD_MU_END: 300,                    // overlap weight during the descent (W_OVERLAP: the search score's)
+  GD_SMOOTH: 0.05, GD_SMOOTH_WH: 0.02,               // softness of the box's sides (x avg size) and of width vs height
+  GD_SMOOTH_CAP: 0.02,                               // softness of the size term's corner at the max scale (ln scale)
+  GD_NEAR: 0.1,                                      // relations' gradient capped below this distance (x avg size)
+  GD_B1: 0.9, GD_B2: 0.999,                          // Adam: decay of the gradient's running mean and mean square
+  GD_SHAKE: 0.3,                                     // starts beyond the four kinds: shaken by this (x avg size)
+  START_SEED_A: 7919, START_SEED_B: 104729,          // per-start random seeds: seed * A + start * B
   // Scoring
   W_OVERLAP: 40,                                     // overlap penalty (only matters inside the optimizer's search)
   W_REL: 4, W_DISTORT: 2,                            // internal scale of the relations and size-distortion terms
@@ -267,23 +269,24 @@ function workArea(monitor, margin) {
 function estPad(items, S, A) {
   const sum = items.reduce((s, i) => s + i.lw * i.lh, 0);
   const est = Math.min(1, Math.sqrt(A.w * A.h * INTERNAL.DENSITY_GUESS / sum));
-  return S.spacing / est;
+  return S.gap / est;
 }
 
 /* --------------------------------------------------------------------------
    5. PUSH-APART PRIMITIVES
    Layout-space rectangles R: { x, y } = center, { w, h } = layout size + gap ("pad").
    -------------------------------------------------------------------------- */
-// Push overlapping pairs apart until nothing overlaps (or maxIter passes). `aspect` biases
-// pushes toward the work area's shape. Returns the number of passes used.
-function resolve(R, maxIter, step, aspect, A, rng) {
+// Push overlapping pairs apart until nothing overlaps (or maxPasses passes), each push
+// `strength` of the overlap. `matchShape` biases pushes toward the work area's shape.
+// Returns the number of passes used.
+function resolve(R, maxPasses, strength, matchShape, A, rng) {
   const target = A.w / A.h;
   let it = 0;
-  for (; it < maxIter; it++) {
+  for (; it < maxPasses; it++) {
     let bx = 1, by = 1;
-    if (aspect > 0) {
+    if (matchShape > 0) {
       const b = bounds(R), ratio = target / ((b.x2 - b.x1) / (b.y2 - b.y1));
-      if (ratio > 1) bx = Math.pow(ratio, aspect); else by = Math.pow(1 / ratio, aspect);
+      if (ratio > 1) bx = Math.pow(ratio, matchShape); else by = Math.pow(1 / ratio, matchShape);
     }
     let moved = false;
     for (let i = 0; i < R.length; i++) for (let j = i + 1; j < R.length; j++) {
@@ -297,7 +300,7 @@ function resolve(R, maxIter, step, aspect, A, rng) {
       const len = Math.hypot(dx, dy); dx /= len; dy /= len;
       // distance along (dx, dy) that separates the pair
       const need = Math.min(Math.abs(dx) > 1e-9 ? ox / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-9 ? oy / Math.abs(dy) : Infinity);
-      const amt = (step * need + INTERNAL.PUSH_NUDGE) / 2;
+      const amt = (strength * need + INTERNAL.PUSH_NUDGE) / 2;
       a.x -= dx * amt; a.y -= dy * amt; c.x += dx * amt; c.y += dy * amt;
     }
     if (!moved) break;
@@ -309,15 +312,15 @@ function resolve(R, maxIter, step, aspect, A, rng) {
 function enforceGap(items, R, A, S) {
   // Overlaps left when the push-apart hit its pass limit (none otherwise: then this
   // returns at once)
-  resolve(R, INTERNAL.CLEANUP.iterations, INTERNAL.CLEANUP.step, 0, A, random(INTERNAL.SEED_GAP));
+  resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_GAP));
   let pad = R.length ? R[0].w - items[0].lw : 0;
   for (let k = 0; k < INTERNAL.GAP_ROUNDS; k++) {
     const b = bounds(R), s = Math.min(A.w / (b.x2 - b.x1 - pad), A.h / (b.y2 - b.y1 - pad));
-    const need = S.spacing / s;
+    const need = S.gap / s;
     if (need <= pad * 1.0001 + 1e-9) break;
     pad = need * INTERNAL.GAP_OVERSHOOT;
     items.forEach((it, i) => { R[i].w = it.lw + pad; R[i].h = it.lh + pad; });
-    resolve(R, INTERNAL.CLEANUP.iterations, INTERNAL.CLEANUP.step, 0, A, random(INTERNAL.SEED_GAP));
+    resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_GAP));
   }
 }
 // Scale the arrangement uniformly so the windows (not their padding) fill the work area,
@@ -354,7 +357,7 @@ const dirPen = (wt, ux, uy, ndx, ndy) => {
 // the real unit direction from i to j; dirPen takes them with (ndx, ndy) =
 // center of j minus center of i.
 function makeRelations(OX, OY, OW, OH, NW, NH, S, diag) {
-  const n = OX.length, order = S.relMode === "order", relOn = S.wRel > 0;
+  const n = OX.length, order = S.relationsMethod === "order", relOn = S.wRelations > 0;
   const rows = relOn && !order;
   const pairs = order ? new Array(n * n) : null;
   const RW = rows ? new Float64Array(n * n) : null;
@@ -379,7 +382,7 @@ function makeRelations(OX, OY, OW, OH, NW, NH, S, diag) {
         relNorm += pr.wt; pairs[i * n + j] = pr;
       } else {
         const ux = d > 1e-6 ? odx / d : 0, uy = d > 1e-6 ? ody / d : 0;
-        const wt = d > 1e-6 ? Math.pow(near / (d + near), 4 * S.relNear) : 0;
+        const wt = d > 1e-6 ? Math.pow(near / (d + near), 4 * S.neighborFocus) : 0;
         const a = i * n + j, b = j * n + i;
         RW[a] = RW[b] = wt;
         RUX[a] = ux; RUX[b] = -ux;
@@ -402,7 +405,7 @@ function makeRelations(OX, OY, OW, OH, NW, NH, S, diag) {
       pr.cy * clamp(-pr.sy * ndy / pr.ny, 0, 1)
     );
   };
-  return { relOn, relNorm, pen, rows, RW, RUX, RUY };
+  return { relOn, relNorm, pen, rows, RW, RUX, RUY, pairs };
 }
 // Scorer for thumbnails T (sizes fixed): parts(X, Y) for full scores, plus the
 // pieces the polish evaluates itself (real centers OX/OY, relations, and the
@@ -433,8 +436,8 @@ function makeScorer(T, ws, S, A) {
   const distortion = lr.reduce((a, v) => a + Math.abs(v - lmean), 0) / Math.max(1, n);
   const rel = makeRelations(OX, OY, O.map(w => w.w), O.map(w => w.h), Wt, Ht, S, A.diag);
   const dist = (X, Y, i) => { const dx = X[i] - OX[i], dy = Y[i] - OY[i]; return Math.sqrt(dx * dx + dy * dy); };
-  const kDisp = S.wDisp * 2 / Math.max(1, n) / A.diag;
-  const kRel = rel.relNorm > 0 ? S.wRel * INTERNAL.W_REL / rel.relNorm : 0;
+  const kDisp = S.wPlace * 2 / Math.max(1, n) / A.diag;
+  const kRel = rel.relNorm > 0 ? S.wRelations * INTERNAL.W_REL / rel.relNorm : 0;
   const kOv = INTERNAL.W_OVERLAP / sumA;
   function parts(X, Y) {
     let d = 0, r = 0, o = 0;
@@ -442,8 +445,8 @@ function makeScorer(T, ws, S, A) {
       d += dist(X, Y, i);
       for (let j = i + 1; j < n; j++) { if (rel.relOn) r += rel.pen(X, Y, i, j); o += overlapArea(X, Y, Wt, Ht, i, j); }
     }
-    const p = { size: S.wScale * size, sizes: S.wSizes * INTERNAL.W_DISTORT * distortion, move: kDisp * d, rel: kRel * r, overlap: kOv * o };
-    p.total = p.size + p.sizes + p.move + p.rel + p.overlap;
+    const p = { size: S.wSize * size, sizes: S.wSizes * INTERNAL.W_DISTORT * distortion, movement: kDisp * d, relations: kRel * r, overlap: kOv * o };
+    p.total = p.size + p.sizes + p.movement + p.relations + p.overlap;
     return p;
   }
   return { parts, Wt, Ht, n, OX, OY, rel, kDisp, kRel, kOv };
@@ -463,7 +466,7 @@ function scoreLayout(T, ws, S, A) {
 // method), so the arrangement follows where windows are, never the stacking order.
 function layoutGrid(ws, S, A) {
   const items = prep(ws, { ...S, fidelity: 1 });
-  const n = items.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), g = S.spacing;
+  const n = items.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), g = S.gap;
   // Gaps between cells; where the gap setting leaves no room for the cells, the gaps
   // shrink to take half the width (or height).
   const gx = A.w - g * (cols - 1) > 0 ? g : A.w / 2 / (cols - 1);
@@ -485,11 +488,11 @@ function layoutGrid(ws, S, A) {
 
 // Push apart: start at the real positions, push overlapping pairs apart,
 // scale the whole arrangement uniformly to fit.
-function layoutNatural(ws, S, A, info) {
+function layoutPush(ws, S, A, info) {
   const items = prep(ws, S), pad = estPad(items, S, A);
   const R = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad, h: it.lh + pad }));
-  const it = resolve(R, S.iterations, S.step, S.aspect, A, random(INTERNAL.SEED_TIES));
-  info.iterations = it; info.hitLimit = it >= S.iterations;
+  const it = resolve(R, S.passes, S.strength, S.matchShape, A, random(INTERNAL.SEED_TIES));
+  info.passes = it; info.hitLimit = it >= S.passes;
   enforceGap(items, R, A, S);
   return finalize(items, R, A, S);
 }
@@ -497,7 +500,7 @@ function layoutNatural(ws, S, A, info) {
 // Ordered rows: rows top to bottom by vertical position, left to right within a row;
 // the row count giving the largest uniform scale wins (or S.rows if set).
 function layoutRows(ws, S, A) {
-  const items = prep(ws, S), n = items.length, g = S.spacing;
+  const items = prep(ws, S), n = items.length, g = S.gap;
   const byY = items.slice().sort((a, b) => a.cy - b.cy || a.cx - b.cx || a.id - b.id);
   const total = byY.reduce((s, i) => s + i.lw, 0);
   // r rows, filled in reading order; s = the scale at which they fit
@@ -541,9 +544,12 @@ function layoutRows(ws, S, A) {
   return out;
 }
 
-// Optimizer: simulated annealing over window centers in layout units (one shared scale,
-// exact relative sizes). Several starts race; at checkpoints the worse half is dropped.
-function layoutAnneal(ws, S, A, info, shared) {
+// Optimizer: gradient descent over window centers in layout units (one shared
+// scale, exact relative sizes), on a smoothed search score. The overlap
+// penalty starts weak and grows, so the arrangement first contracts through
+// overlaps and then separates. Several starts race; at checkpoints the worse
+// half is dropped.
+function layoutOptimizer(ws, S, A, info, shared) {
   const items = prep(ws, S), n = items.length, pad = estPad(items, S, A);
   const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad, h: it.lh + pad }));
   if (n < 2) return finalize(items, R0, A, S);
@@ -559,7 +565,7 @@ function layoutAnneal(ws, S, A, info, shared) {
     const R = R0.map(r => ({ ...r })), push = S.pushStart, P = INTERNAL.START_RESOLVE;
     if (kind === "push") { // = the push-apart algorithm's first step
       const rng = random(INTERNAL.SEED_TIES);
-      resolve(R, push.iterations, push.step, push.aspect, A, rng);
+      resolve(R, push.passes, push.strength, push.matchShape, A, rng);
       shared.push = { items, R: R.map(r => ({ ...r })) };
     } else if (kind === "rows" || kind === "grid") {
       let T;
@@ -574,7 +580,7 @@ function layoutAnneal(ws, S, A, info, shared) {
       for (const it of items) ls += Math.log(byId.get(it.id).w / it.lw);
       const s0 = Math.exp(ls / n);
       items.forEach((it, i) => { const t = byId.get(it.id); R[i].x = (t.x + t.w / 2) / s0; R[i].y = (t.y + t.h / 2) / s0; });
-      resolve(R, P.iterations, P.step, 0, A, random(INTERNAL.SEED_TIES));
+      resolve(R, P.passes, P.strength, 0, A, random(INTERNAL.SEED_TIES));
     }
     return (startCache[kind] = { X: Float64Array.from(R, r => r.x), Y: Float64Array.from(R, r => r.y) });
   };
@@ -585,125 +591,295 @@ function layoutAnneal(ws, S, A, info, shared) {
   const OX = Float64Array.from(items, it => it.cx), OY = Float64Array.from(items, it => it.cy);
   const sumA = R0.reduce((s, r) => s + r.w * r.h, 0);
   const avg = R0.reduce((s, r) => s + Math.sqrt(r.w * r.h), 0) / n;
-  const T0 = S.temp;
   const rel = makeRelations(OX, OY, items.map(it => it.ow), items.map(it => it.oh), items.map(it => it.lw), items.map(it => it.lh), S, A.diag);
-  const relOn = rel.relOn, relPen = rel.pen;
+  const relOn = rel.relOn, relPen = rel.pen, pairs = rel.pairs;
   const relRows = rel.rows, RW = rel.RW, RUX = rel.RUX, RUY = rel.RUY;
+  const kDisp = S.wPlace * 2 / n / A.diag;
+  const kRel = rel.relNorm > 0 ? S.wRelations * INTERNAL.W_REL / rel.relNorm : 0;
+  let mOX = 0, mOY = 0;
+  for (let i = 0; i < n; i++) { mOX += OX[i] / n; mOY += OY[i] / n; }
 
-  // The same score as scoreLayout(), computed in layout units: the arrangement is scaled to
-  // fit and placed as the pipeline will place it (centered, or toward the real windows).
-  const cost = (ch, ovT = ch.ov, relT = ch.rel) => {
-    const X = ch.X, Y = ch.Y;
+  // The size terms of the score at shared scale s: -ln(min(s, maxScale)) x
+  // wSize (thumbnails held at the maximum scale count as their intended size,
+  // so the sizes term is 0 for one shared scale).
+  const lnMax = Math.log(S.maxScale);
+  const sizeCost = s => -Math.min(Math.log(s), lnMax) * S.wSize;
+  // The same, with its corner rounded over GD_SMOOTH_CAP in ln s, for the
+  // descent: returns the value and sets sizeSlope = d(value) / d(ln s).
+  const tauC = INTERNAL.GD_SMOOTH_CAP;
+  let sizeSlope = 0;
+  const sizeCostSmooth = ls => {
+    // soft min(ln s, lnMax) = ln s - tauC * softplus((ln s - lnMax) / tauC)
+    const z = (ls - lnMax) / tauC;
+    const sp = z > 0 ? z + Math.log1p(Math.exp(-z)) : Math.log1p(Math.exp(z));
+    sizeSlope = -S.wSize / (1 + Math.exp(z));
+    return -(ls - tauC * sp) * S.wSize;
+  };
+
+  // Arrangement placed as the pipeline will place it: scaled by s about the
+  // center of the box (x1, y1, x2, y2), then moved toward the real windows as
+  // far as the work area allows (or centered). Thumbnail i lands at
+  // px + (X[i] - bcx) * s, which is also base + (X[i] - ref) * s with ref =
+  // mean(X) while the move is free (mode 0), the box's left side + pad / 2
+  // when held at the work area's left (1), its right side - pad / 2 when held
+  // at the right (2), or its center when centered (3). Same for y.
+  const place = {
+    px: 0, py: 0, bcx: 0, bcy: 0, modeX: 0, modeY: 0, refX: 0, refY: 0
+  };
+  const placeAt = (X, Y, x1, y1, x2, y2, s) => {
+    const bcx = (x1 + x2) / 2, bcy = (y1 + y2) / 2;
+    place.bcx = bcx; place.bcy = bcy;
+    if (S.centered) {
+      place.px = A.cx; place.py = A.cy; place.modeX = place.modeY = 3;
+      place.refX = bcx; place.refY = bcy;
+      return;
+    }
+    let mX = 0, mY = 0;
+    for (let i = 0; i < n; i++) { mX += X[i]; mY += Y[i]; }
+    mX /= n; mY /= n;
+    const mx = mOX - (mX - bcx) * s, my = mOY - (mY - bcy) * s;
+    const hw = (x2 - x1 - pad) * s / 2, hh = (y2 - y1 - pad) * s / 2;
+    const lx = A.x + hw, hx = A.x + A.w - hw;
+    const ly = A.y + hh, hy = A.y + A.h - hh;
+    place.px = clamp(mx, lx, hx); place.py = clamp(my, ly, hy);
+    place.modeX = mx < lx ? 1 : mx > hx ? 2 : 0;
+    place.modeY = my < ly ? 1 : my > hy ? 2 : 0;
+    const mdX = place.modeX, mdY = place.modeY;
+    place.refX = mdX === 0 ? mX : mdX === 1 ? x1 + pad / 2 : x2 - pad / 2;
+    place.refY = mdY === 0 ? mY : mdY === 1 ? y1 + pad / 2 : y2 - pad / 2;
+  };
+
+  // The search score: the same as scoreLayout(), computed in layout units,
+  // with the overlap term (which only the search has). Picks the winner among
+  // the starts that finish.
+  const searchScore = (X, Y) => {
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     for (let i = 0; i < n; i++) {
       const hw = W[i] / 2, hh = H[i] / 2;
       if (X[i] - hw < x1) x1 = X[i] - hw; if (X[i] + hw > x2) x2 = X[i] + hw;
       if (Y[i] - hh < y1) y1 = Y[i] - hh; if (Y[i] + hh > y2) y2 = Y[i] + hh;
     }
-    const s = Math.min(A.w / (x2 - x1 - pad), A.h / (y2 - y1 - pad)), bcx = (x1 + x2) / 2, bcy = (y1 + y2) / 2;
-    let px = A.cx, py = A.cy;
-    if (!S.centered) { // placement toward the real windows, as far as the work area allows
-      let mx = 0, my = 0;
-      for (let i = 0; i < n; i++) { mx += OX[i] - (X[i] - bcx) * s; my += OY[i] - (Y[i] - bcy) * s; }
-      const hw = (x2 - x1 - pad) * s / 2, hh = (y2 - y1 - pad) * s / 2;
-      px = clamp(mx / n, A.x + hw, A.x + A.w - hw); py = clamp(my / n, A.y + hh, A.y + A.h - hh);
-    }
-    ch.ps = s; ch.pbx = bcx; ch.pby = bcy; ch.ppx = px; ch.ppy = py; // placement, for aimed moves
-    let d = 0;
+    const s = Math.min(A.w / (x2 - x1 - pad), A.h / (y2 - y1 - pad));
+    placeAt(X, Y, x1, y1, x2, y2, s);
+    let d = 0, o = 0, r = 0;
     for (let i = 0; i < n; i++) {
-      const dx = px + (X[i] - bcx) * s - OX[i], dy = py + (Y[i] - bcy) * s - OY[i];
+      const dx = place.px + (X[i] - place.bcx) * s - OX[i];
+      const dy = place.py + (Y[i] - place.bcy) * s - OY[i];
       d += Math.sqrt(dx * dx + dy * dy);
-    }
-    return -Math.log(Math.min(s, S.maxScale)) * S.wScale + S.wDisp * 2 * d / n / A.diag + INTERNAL.W_OVERLAP * ovT / sumA
-      + (rel.relNorm > 0 ? S.wRel * INTERNAL.W_REL * relT / rel.relNorm : 0);
-  };
-
-  // One independent search ("start"). Pair values (overlap, relation penalty) are cached in
-  // OV / RL, so a move only computes the moved window's new pair values.
-  const makeChain = c => {
-    const kind = kindOf(c), sp = startPos(kind);
-    const ch = { c, kind, X: sp.X.slice(), Y: sp.Y.slice(),
-      rng: random((S.seed * INTERNAL.CHAIN_SEED_A + c * INTERNAL.CHAIN_SEED_B) | 0),
-      spare: null, steps: 0, accepted: 0, ov: 0, rel: 0 };
-    ch.OV = new Float64Array(n * n); ch.RL = new Float64Array(n * n);
-    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-      const o = overlapArea(ch.X, ch.Y, W, H, i, j), r = relOn ? relPen(ch.X, ch.Y, i, j) : 0;
-      ch.OV[i * n + j] = ch.OV[j * n + i] = o; ch.RL[i * n + j] = ch.RL[j * n + i] = r;
-      ch.ov += o; ch.rel += r;
-    }
-    ch.cur = ch.best = cost(ch); ch.bestX = ch.X.slice(); ch.bestY = ch.Y.slice();
-    return ch;
-  };
-  const gauss = ch => { // normal random numbers (Box-Muller, two per draw)
-    if (ch.spare !== null) { const v = ch.spare; ch.spare = null; return v; }
-    const u = Math.max(ch.rng(), 1e-12), v = ch.rng(), m = Math.sqrt(-2 * Math.log(u));
-    ch.spare = m * Math.sin(2 * Math.PI * v); return m * Math.cos(2 * Math.PI * v);
-  };
-  // One move. All starts share one cooling schedule of length L, so at any checkpoint
-  // they are compared at the same temperature.
-  const newO = new Float64Array(n), newR = new Float64Array(n);
-  const aimShare = INTERNAL.AIM_SHARE * clamp((n - INTERNAL.AIM_FROM_N) / (INTERNAL.AIM_FULL_N - INTERNAL.AIM_FROM_N), 0, 1);
-  const step = (ch, L) => {
-    if (ch.T === undefined) { ch.T = T0; ch.cool = Math.pow(INTERNAL.COOL_TO, 1 / L); }
-    const T = ch.T; ch.T *= ch.cool; ch.steps++;
-    const X = ch.X, Y = ch.Y, rng = ch.rng, OV = ch.OV, RL = ch.RL;
-    const i = (rng() * n) | 0, px = X[i], py = Y[i], row = i * n;
-    const sig = avg * (INTERNAL.MOVE_MIN + INTERNAL.MOVE_HOT * T / T0);
-    if (aimShare > 0 && rng() < aimShare) { // jump part of the way toward the window's home
-      const hx = (OX[i] - ch.ppx) / ch.ps + ch.pbx, hy = (OY[i] - ch.ppy) / ch.ps + ch.pby, u = rng();
-      X[i] += (hx - X[i]) * u + gauss(ch) * sig * INTERNAL.AIM_JITTER;
-      Y[i] += (hy - Y[i]) * u + gauss(ch) * sig * INTERNAL.AIM_JITTER;
-    } else { X[i] += gauss(ch) * sig; Y[i] += gauss(ch) * sig; }
-    let dO = 0, dR = 0;
-    for (let j = 0; j < n; j++) if (j !== i) {
-      const o = overlapArea(X, Y, W, H, i, j); newO[j] = o; dO += o - OV[row + j];
-      if (relRows) { // = relPen(X, Y, i, j), read straight from the row arrays
-        const k = row + j, wt = RW[k];
-        const r = wt ? dirPen(wt, RUX[k], RUY[k], X[j] - X[i], Y[j] - Y[i]) : 0;
-        newR[j] = r; dR += r - RL[k];
-      } else if (relOn) {
-        const r = relPen(X, Y, i, j); newR[j] = r; dR += r - RL[row + j];
+      for (let j = i + 1; j < n; j++) {
+        o += overlapArea(X, Y, W, H, i, j);
+        if (relOn) r += relPen(X, Y, i, j);
       }
     }
-    const c = cost(ch, ch.ov + dO, ch.rel + dR);
-    if (c <= ch.cur || rng() < Math.exp((ch.cur - c) / T)) {
-      ch.cur = c; ch.accepted++; ch.ov += dO; ch.rel += dR;
-      for (let j = 0; j < n; j++) if (j !== i) { OV[row + j] = OV[j * n + i] = newO[j]; if (relOn) RL[row + j] = RL[j * n + i] = newR[j]; }
-      if (c < ch.best) { ch.best = c; ch.bestX.set(X); ch.bestY.set(Y); }
-    } else { X[i] = px; Y[i] = py; }
+    return (
+      sizeCost(s) + kDisp * d +
+      INTERNAL.W_OVERLAP * o / sumA + kRel * r
+    );
+  };
+
+  // The smoothed search score and its gradient (into gX, gY), with overlap
+  // weight mu. Differences from the search score: the box's sides are soft
+  // maxima (log-sum-exp over GD_SMOOTH x the average size), and so is the
+  // choice between its width and height.
+  const gX = new Float64Array(n), gY = new Float64Array(n);
+  const e1 = new Float64Array(n), e2 = new Float64Array(n);
+  const e3 = new Float64Array(n), e4 = new Float64Array(n);
+  const u1 = new Float64Array(n), u2 = new Float64Array(n);
+  const tau = INTERNAL.GD_SMOOTH * avg, tauWH = INTERNAL.GD_SMOOTH_WH;
+  const near = INTERNAL.GD_NEAR * avg;
+  const gradient = (X, Y, mu) => {
+    gX.fill(0); gY.fill(0);
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    let i1 = 0, i2 = 0, j1 = 0, j2 = 0; // which windows set the box's sides
+    for (let i = 0; i < n; i++) {
+      const hw = W[i] / 2, hh = H[i] / 2;
+      if (X[i] - hw < x1) { x1 = X[i] - hw; i1 = i; }
+      if (X[i] + hw > x2) { x2 = X[i] + hw; i2 = i; }
+      if (Y[i] - hh < y1) { y1 = Y[i] - hh; j1 = i; }
+      if (Y[i] + hh > y2) { y2 = Y[i] + hh; j2 = i; }
+    }
+    // the box's width bw and height bh (soft), the scale s =
+    // exp(-softmax(la, lb)), and wa: how much the width sets the scale
+    let s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+    for (let i = 0; i < n; i++) {
+      s1 += (e1[i] = Math.exp((X[i] + W[i] / 2 - x2) / tau));
+      s2 += (e2[i] = Math.exp((x1 - X[i] + W[i] / 2) / tau));
+      s3 += (e3[i] = Math.exp((Y[i] + H[i] / 2 - y2) / tau));
+      s4 += (e4[i] = Math.exp((y1 - Y[i] + H[i] / 2) / tau));
+    }
+    const bw = x2 - x1 + tau * Math.log(s1 * s2) - pad;
+    const bh = y2 - y1 + tau * Math.log(s3 * s4) - pad;
+    const la = Math.log(bw / A.w), lb = Math.log(bh / A.h);
+    const lm = Math.max(la, lb);
+    const ea = Math.exp((la - lm) / tauWH), eb = Math.exp((lb - lm) / tauWH);
+    const smax = lm + tauWH * Math.log(ea + eb), wa = ea / (ea + eb);
+    const s = Math.exp(-smax);
+    // movement: each thumbnail's distance from its real window
+    placeAt(X, Y, x1, y1, x2, y2, s);
+    const rX = place.refX, rY = place.refY;
+    let d = 0, ux = 0, uy = 0, dS = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = place.px + (X[i] - place.bcx) * s - OX[i];
+      const dy = place.py + (Y[i] - place.bcy) * s - OY[i];
+      const di = Math.sqrt(dx * dx + dy * dy), u = di > 1e-9 ? 1 / di : 0;
+      d += di;
+      u1[i] = dx * u; u2[i] = dy * u; ux += u1[i]; uy += u2[i];
+      dS += u1[i] * (X[i] - rX) + u2[i] * (Y[i] - rY); // d(d) / d(s)
+    }
+    const kd = kDisp * s;
+    for (let i = 0; i < n; i++) { gX[i] += kd * u1[i]; gY[i] += kd * u2[i]; }
+    // ... and through ref
+    const mxm = place.modeX, mym = place.modeY;
+    if (mxm === 0) for (let i = 0; i < n; i++) gX[i] -= kd * ux / n;
+    if (mxm === 1 || mxm === 3) gX[i1] -= kd * ux * (mxm === 3 ? 0.5 : 1);
+    if (mxm === 2 || mxm === 3) gX[i2] -= kd * ux * (mxm === 3 ? 0.5 : 1);
+    if (mym === 0) for (let i = 0; i < n; i++) gY[i] -= kd * uy / n;
+    if (mym === 1 || mym === 3) gY[j1] -= kd * uy * (mym === 3 ? 0.5 : 1);
+    if (mym === 2 || mym === 3) gY[j2] -= kd * uy * (mym === 3 ? 0.5 : 1);
+    // size, and movement through the scale: d(score) / d(bw), d(score) / d(bh)
+    // (d(ln s) / d(ln bw) = -wa, d(ln s) / d(ln bh) = -(1 - wa))
+    const f = kDisp * d + sizeCostSmooth(-smax), dlns = -sizeSlope - kd * dS;
+    const kw = dlns * wa / bw, kh = dlns * (1 - wa) / bh;
+    for (let i = 0; i < n; i++) {
+      gX[i] += kw * (e1[i] / s1 - e2[i] / s2);
+      gY[i] += kh * (e3[i] / s3 - e4[i] / s4);
+    }
+    // overlaps and relations, per pair
+    const kOv = mu / sumA;
+    let o = 0, r = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = X[j] - X[i], dy = Y[j] - Y[i];
+      const ox = (W[i] + W[j]) / 2 - Math.abs(dx);
+      const oy = (H[i] + H[j]) / 2 - Math.abs(dy);
+      if (ox > 0 && oy > 0) {
+        o += ox * oy;
+        const gx = dx < 0 ? -kOv * oy : kOv * oy;
+        const gy = dy < 0 ? -kOv * ox : kOv * ox;
+        gX[i] += gx; gX[j] -= gx; gY[i] += gy; gY[j] -= gy;
+      }
+      if (relRows) { // = dirPen(), and its gradient
+        const k = i * n + j, wt = RW[k];
+        if (!wt) continue;
+        const rx = RUX[k], ry = RUY[k], dd = Math.sqrt(dx * dx + dy * dy);
+        if (dd < 1e-6) { r += wt * 0.5; continue; }
+        const cs = (rx * dx + ry * dy) / dd;
+        r += wt * (1 - cs) / 2;
+        // the gradient grows as 1 / distance; capped for (nearly) coinciding
+        // windows, where the overlap gradient matters anyway
+        const c = -kRel * wt / 2 / Math.max(dd, near);
+        const gx = c * (rx - cs * dx / dd), gy = c * (ry - cs * dy / dd);
+        gX[j] += gx; gY[j] += gy; gX[i] -= gx; gY[i] -= gy;
+      } else if (relOn) { // order method: piecewise linear, see makeRelations
+        const pr = pairs[i * n + j];
+        if (!pr.wt) continue;
+        const vx = -pr.sx * dx / pr.nx, vy = -pr.sy * dy / pr.ny;
+        r += pr.cx * clamp(vx, 0, 1) + pr.cy * clamp(vy, 0, 1);
+        if (vx > 0 && vx < 1) {
+          const gx = -kRel * pr.cx * pr.sx / pr.nx;
+          gX[j] += gx; gX[i] -= gx;
+        }
+        if (vy > 0 && vy < 1) {
+          const gy = -kRel * pr.cy * pr.sy / pr.ny;
+          gY[j] += gy; gY[i] -= gy;
+        }
+      }
+    }
+    return f + kOv * o + kRel * r;
+  };
+
+  // One start: positions and the state of its descent (Adam: per-coordinate
+  // step sizes from running averages of the gradient and its square).
+  const kindsUsed = S.startFrom === "mixed" ? KINDS.length : 1;
+  const makeStart = c => {
+    const kind = kindOf(c), sp = startPos(kind);
+    const st = {
+      c, kind, X: sp.X.slice(), Y: sp.Y.slice(), t: 0, f: Infinity,
+      mX: new Float64Array(n), mY: new Float64Array(n),
+      vX: new Float64Array(n), vY: new Float64Array(n), b1t: 1, b2t: 1,
+    };
+    if (c >= kindsUsed) { // its kind was taken by an earlier start: shaken
+      const rng = random(
+        (S.seed * INTERNAL.START_SEED_A + c * INTERNAL.START_SEED_B) | 0
+      );
+      const sig = INTERNAL.GD_SHAKE * avg;
+      for (let i = 0; i < n; i++) {
+        // normal random numbers (Box-Muller)
+        const m = Math.sqrt(-2 * Math.log(Math.max(rng(), 1e-12)));
+        const a = 2 * Math.PI * rng();
+        st.X[i] += m * Math.cos(a) * sig; st.Y[i] += m * Math.sin(a) * sig;
+      }
+    }
+    return st;
+  };
+  // Descend until step `until` of a schedule of L steps: step size from
+  // lr0 down to lr1, overlap weight from mu0 up to mu1, both geometric.
+  const B1 = INTERNAL.GD_B1, B2 = INTERNAL.GD_B2;
+  const lr0 = S.firstStep * avg, lr1 = INTERNAL.GD_STEP_END * avg;
+  const mu0 = INTERNAL.GD_MU_START, mu1 = INTERNAL.GD_MU_END;
+  const descend = (st, until, L) => {
+    const X = st.X, Y = st.Y, mX = st.mX, mY = st.mY, vX = st.vX, vY = st.vY;
+    for (; st.t < until; st.t++) {
+      const fr = st.t / L;
+      const lr = lr0 * Math.pow(lr1 / lr0, fr);
+      const mu = mu0 * Math.pow(mu1 / mu0, fr);
+      st.f = gradient(X, Y, mu);
+      st.b1t *= B1; st.b2t *= B2;
+      const c1 = lr / (1 - st.b1t), c2 = 1 / (1 - st.b2t);
+      for (let i = 0; i < n; i++) {
+        const gx = gX[i], gy = gY[i];
+        mX[i] = B1 * mX[i] + (1 - B1) * gx;
+        mY[i] = B1 * mY[i] + (1 - B1) * gy;
+        vX[i] = B2 * vX[i] + (1 - B2) * gx * gx;
+        vY[i] = B2 * vY[i] + (1 - B2) * gy * gy;
+        X[i] -= c1 * mX[i] / (Math.sqrt(vX[i] * c2) + 1e-30);
+        Y[i] -= c1 * mY[i] / (Math.sqrt(vY[i] * c2) + 1e-30);
+      }
+    }
   };
 
   // Race. counts = starts alive per round; checkpoints q at fractions of the schedule
-  // (first at S.checkpoint, then evenly to the end). L is chosen so the total number of
-  // moves equals S.iterations.
-  const K = Math.max(1, Math.round(S.restarts)), N = S.iterations;
+  // (first at S.checkpoint, then evenly to the end); at a checkpoint the starts are
+  // compared by their smoothed score, all at the same overlap weight. L is chosen so the
+  // total number of descent steps equals S.steps.
+  const K = Math.max(1, Math.round(S.starts));
   const counts = [K];
-  if (S.bailout) while (counts[counts.length - 1] > 1) counts.push(Math.ceil(counts[counts.length - 1] / 2));
+  if (S.dropWeakStarts) while (counts[counts.length - 1] > 1) counts.push(Math.ceil(counts[counts.length - 1] / 2));
   const rounds = counts.length;
   const q = counts.map((_, r) => rounds === 1 ? 1 : S.checkpoint + (1 - S.checkpoint) * r / (rounds - 1));
   q[rounds - 1] = 1;
-  const L = N / counts.reduce((s, k, r) => s + k * (q[r] - (r ? q[r - 1] : 0)), 0);
-  const chains = Array.from({ length: K }, (_, c) => makeChain(c));
-  let alive = chains.slice();
+  const share = counts.reduce((s, k, r) => s + k * (q[r] - (r ? q[r - 1] : 0)), 0);
+  const L = Math.max(1, Math.round(S.steps / share));
+  const starts = Array.from({ length: K }, (_, c) => makeStart(c));
+  let alive = starts.slice();
   for (let r = 0; r < rounds; r++) {
     const until = Math.round(q[r] * L);
-    for (const ch of alive) while (ch.steps < until) step(ch, L);
-    if (r + 1 < rounds) { alive.sort((a, b) => a.best - b.best || a.c - b.c); alive = alive.slice(0, counts[r + 1]); }
+    for (const st of alive) descend(st, until, L);
+    if (r + 1 < rounds) {
+      alive.sort((a, b) => a.f - b.f || a.c - b.c);
+      alive = alive.slice(0, counts[r + 1]);
+    }
   }
-  const win = chains.reduce((a, b) => b.best < a.best ? b : a);
+  let win = alive[0];
+  if (alive.length > 1) { // without dropping weak starts: the best finished start wins
+    let best = Infinity;
+    for (const st of alive) {
+      const sc = searchScore(st.X, st.Y);
+      if (sc < best) { best = sc; win = st; }
+    }
+  }
 
-  const R = R0.map((r, i) => ({ x: win.bestX[i], y: win.bestY[i], w: r.w, h: r.h }));
-  resolve(R, INTERNAL.CLEANUP.iterations, INTERNAL.CLEANUP.step, 0, A, random(INTERNAL.SEED_CLEANUP)); // no overlap may remain
+  const R = R0.map((r, i) => ({ x: win.X[i], y: win.Y[i], w: r.w, h: r.h }));
+  resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_CLEANUP)); // no overlap may remain
   enforceGap(items, R, A, S);
   info.starts = K; info.winningStart = win.c + 1; info.winningKind = win.kind;
-  info.startsPerRound = counts; info.acceptRate = win.accepted / Math.max(1, win.steps);
+  info.startsPerRound = counts; info.stepsPerStart = L;
   return finalize(items, R, A, S);
 }
 
 const ALGORITHMS = {
   //        run function    uniformScale: one scale for all windows   polishable: may use the polish step
-  anneal:  { run: layoutAnneal,  uniformScale: true,  polishable: true },
-  natural: { run: layoutNatural, uniformScale: true,  polishable: true },
+  optimizer: { run: layoutOptimizer, uniformScale: true, polishable: true },
+  push:    { run: layoutPush,    uniformScale: true,  polishable: true },
   rows:    { run: layoutRows,    uniformScale: true,  polishable: false },
   grid:    { run: layoutGrid,    uniformScale: false, polishable: false },
 };
@@ -752,7 +928,7 @@ function centerLayout(T, A) {
 // * Overlap terms are exactly 0 while nothing overlaps, and skipped then.
 // * A thumbnail whose last scan found nothing is skipped until another moves.
 function polishLayout(T, ws, S, A) {
-  const sc = makeScorer(T, ws, S, A), n = sc.n, g = S.spacing;
+  const sc = makeScorer(T, ws, S, A), n = sc.n, g = S.gap;
   if (n < 1) return { T, moved: 0, gain: 0 };
   const Wt = Float64Array.from(sc.Wt), Ht = Float64Array.from(sc.Ht);
   const X = Float64Array.from(T, t => t.x + t.w / 2);
@@ -899,9 +1075,9 @@ function optimizerSafeguard(T, ws, S, A, info, shared) {
       C = finalize(p.items, p.R, A, S);
     } else {
       const P = S.pushStart;
-      C = layoutNatural(
+      C = layoutPush(
         ws,
-        { ...S, iterations: P.iterations, step: P.step, aspect: P.aspect },
+        { ...S, passes: P.passes, strength: P.strength, matchShape: P.matchShape },
         A,
         {}
       );
@@ -945,7 +1121,7 @@ function polishLowerBound(C, ws, S, A) {
   for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
     const a = (C[i].w + C[j].w) / 2, b = (C[i].h + C[j].h) / 2;
     const s0 = Math.max(Math.abs(X[i] - X[j]) - a, Math.abs(Y[i] - Y[j]) - b);
-    const r = Math.min(S.spacing, s0) - slack;
+    const r = Math.min(S.gap, s0) - slack;
     const m = Math.min(
       a + r - Math.abs(OX[i] - OX[j]),
       b + r - Math.abs(OY[i] - OY[j])
@@ -962,9 +1138,9 @@ function polishLowerBound(C, ws, S, A) {
   return p.size + p.sizes + sc.kDisp * move;
 }
 
-// Optional: let each thumbnail (smallest first) grow into free space, up to S.growLimit.
+// Optional: let each thumbnail (smallest first) grow into free space, up to S.maxGrowth.
 function fillGaps(T, S, A) {
-  const g = S.spacing;
+  const g = S.gap;
   const order = T.map((_, i) => i).sort((a, b) => T[a].w * T[a].h - T[b].w * T[b].h || T[a].y - T[b].y || T[a].x - T[b].x);
   const hits = (r, i) => {
     if (r.x < A.x - 0.5 || r.y < A.y - 0.5 || r.x + r.w > A.x + A.w + 0.5 || r.y + r.h > A.y + A.h + 0.5) return true;
@@ -976,7 +1152,7 @@ function fillGaps(T, S, A) {
     return false;
   };
   for (const i of order) {
-    const t = T[i], cur = t.w / t.ow, maxG = Math.min(S.growLimit, S.maxScale / cur);
+    const t = T[i], cur = t.w / t.ow, maxG = Math.min(S.maxGrowth, S.maxScale / cur);
     if (maxG <= 1) continue;
     const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
     let lo = 1, hi = maxG;
@@ -994,9 +1170,9 @@ function fillGaps(T, S, A) {
 function settings(algorithm, overrides) {
   if (!ALGORITHMS[algorithm]) throw new Error("Unknown spread algorithm: " + algorithm);
   const S = { ...DEFAULTS.common, ...DEFAULTS.scoring, ...DEFAULTS[algorithm] };
-  if (algorithm === "anneal") {
-    const n = DEFAULTS.natural;
-    S.pushStart = { iterations: n.iterations, step: n.step, aspect: n.aspect, polish: n.polish };
+  if (algorithm === "optimizer") {
+    const p = DEFAULTS.push;
+    S.pushStart = { passes: p.passes, strength: p.strength, matchShape: p.matchShape, polish: p.polish };
     S.rowsStart = { rows: DEFAULTS.rows.rows };
   }
   return { ...S, ...(overrides || {}) };
@@ -1005,15 +1181,15 @@ function settings(algorithm, overrides) {
 // The full pipeline: algorithm, placement toward the real windows, polish, optimizer
 // safeguard, gap filling, score, centering (when asked for).
 // info (diagnostics, present when relevant):
-//   natural:  iterations, hitLimit
-//   anneal:   starts, winningStart (1-based), winningKind, startsPerRound, acceptRate,
+//   push:     passes, hitLimit
+//   optimizer: starts, winningStart (1-based), winningKind, startsPerRound, stepsPerStart,
 //             keptStart (null, or the starting layout kept by the safeguard)
 //   polish:   polishMoves, polishGain
 function compute(windows, monitor, algorithm, S) {
   const algo = ALGORITHMS[algorithm];
   if (!algo) throw new Error("Unknown spread algorithm: " + algorithm);
   S = S || settings(algorithm);
-  if (algorithm === "anneal" && (!S.pushStart || !S.rowsStart)) S = settings(algorithm, S); // fill in start settings
+  if (algorithm === "optimizer" && (!S.pushStart || !S.rowsStart)) S = settings(algorithm, S); // fill in start settings
   const ws = windows.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h }));
   const A = workArea(monitor, S.margin), info = {};
   // Input nothing can be laid out from (and that could make the algorithms misbehave)
@@ -1031,7 +1207,7 @@ function compute(windows, monitor, algorithm, S) {
     const r = polishLayout(T, ws, S, A);
     T = r.T; info.polishMoves = r.moved; info.polishGain = r.gain;
   }
-  if (algorithm === "anneal") T = optimizerSafeguard(T, ws, S, A, info, shared);
+  if (algorithm === "optimizer") T = optimizerSafeguard(T, ws, S, A, info, shared);
   if (algo.uniformScale && S.fill) T = fillGaps(T, S, A);
   // Scored before centering: the user asked for that move, so it costs nothing.
   const sc = scoreLayout(T, ws, S, A);

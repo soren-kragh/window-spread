@@ -17,7 +17,7 @@ async function run() {
   ok('settings-schema.json is exactly what tools/build-schema.js generates from the engine\'s DEFAULTS',
     require(path.join(__dirname, '..', 'tools', 'build-schema.js')).text === fileText,
     'if not: run node tools/build-schema.js');
-  const map = []; const re = /\["([a-z-]+)", "(common|scoring|anneal|natural|rows|grid)", "(\w+)"(?:, (\d+))?\]/g; let m;
+  const map = []; const re = /\["([a-z-]+)", "(common|scoring|optimizer|push|rows|grid)", "(\w+)"(?:, (\d+))?\]/g; let m;
   while ((m = re.exec(extSrc))) map.push({ key: m[1], group: m[2], engineKey: m[3], unit: m[4] ? +m[4] : 0 });
   ok('every setting the extension maps has the engine\'s default (times its unit)', map.length > 0 && map.every(e => schema[e.key] && (e.unit ? schema[e.key].default * e.unit : schema[e.key].default) === SL.DEFAULTS[e.group][e.engineKey]), map.length + ' settings');
   const read = []; const re2 = /(?:getValue|readConfig)\("([a-z-]+)"/g; // direct reads, and the algorithm keys passed to readConfig()
@@ -26,6 +26,13 @@ async function run() {
   const used = map.map(e => e.key).concat(read);
   ok('the extension reads exactly the settings the file defines',
     settingKeys.every(k => used.indexOf(k) >= 0) && used.every(k => settingKeys.indexOf(k) >= 0));
+  // the log names algorithms as the settings window does
+  const names = new Function('return ' + /const ALGORITHM_NAMES = (\{[^}]*\})/.exec(extSrc)[1])();
+  const shown = {};
+  for (const [label, id] of Object.entries(schema.algorithm.options)) shown[id] = label;
+  ok('the log names the algorithms as the settings window does, and the engine has exactly those',
+    JSON.stringify(names) === JSON.stringify(shown) &&
+    JSON.stringify(Object.keys(names).sort()) === JSON.stringify(SL.ALGORITHMS.slice().sort()));
 
   section('Settings: what Cinnamon\'s settings dialog and settings code accept');
   const xs = fs.readFileSync(C.path('files/usr/share/cinnamon/cinnamon-settings/xlet-settings.py'), 'utf8');
@@ -95,7 +102,7 @@ async function run() {
   }
   const most = Math.max.apply(null, L.pages.map(p => L[p].sections.reduce((a, s) => a + L[s].keys.length, 0)));
   // 9 = the Show all workspaces tab with every conditional setting showing (another algorithm
-  // than the grid, and gap filling on); with the default equal grid it shows 5.
+  // than the grid, and gap filling on).
   ok('pages are short (avoids scrolling, where the mouse wheel would change sliders)', most <= 9, 'at most ' + most + ' settings per page');
 
   section('Extension metadata');
