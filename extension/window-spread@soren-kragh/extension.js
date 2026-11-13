@@ -1,8 +1,9 @@
 /* ==========================================================================
-   WINDOW SPREAD: Cinnamon 6.0 extension
+   WINDOW SPREAD: Cinnamon extension (6.0 to 6.8)
    ==========================================================================
-   Replaces the window arrangement of Cinnamon's "Show all windows" view (Scale)
-   with the layout engine in spreadLayout.js. Everything else about the view stays
+   Replaces the window arrangement of Cinnamon's "Show all windows" view (Scale),
+   and of the windows inside each workspace in "Show all workspaces" (Expo), with
+   the layout engine in spreadLayout.js. Everything else about the views stays
    Cinnamon's own: animations, window titles, close buttons, clicking a window.
 
    How it hooks in (verified against Cinnamon 6.0.5, js/ui/workspace.js)
@@ -38,8 +39,7 @@
      overviewModeOff() (back to real positions) is unchanged.
 
    Lifecycle (called by Cinnamon): init(metadata) once when loaded; enable() when
-   switched on (and at each login while on); disable() when switched off. enable()
-   returns the functions that buttons in the settings dialog can call.
+   switched on (and at each login while on); disable() when switched off.
    ========================================================================== */
 
 const Main = imports.ui.main;
@@ -110,6 +110,24 @@ let thumbCenters = new WeakMap(); // window clone -> its thumbnail center, for k
 function log(msg) { global.log(LOG_PREFIX + msg); }
 function logError(msg, e) { global.logError(LOG_PREFIX + msg + (e ? ": " + e + (e.stack ? "\n" + e.stack : "") : "")); }
 
+// The engine's targets for `windows`, checked: one per window, at finite positions with
+// positive sizes. Anything else throws, so the caller falls back to Cinnamon's own layout
+// instead of handing Cinnamon an unusable one.
+function checkedTargets(res, windows) {
+  const byId = new Map(res.targets.map(t => [t.id, t]));
+  for (const w of windows) {
+    const t = byId.get(w.id);
+    const ok = t && [t.x, t.y, t.w, t.h].every(Number.isFinite) && t.w > 0 && t.h > 0;
+    if (!ok) throw new Error("the engine returned an unusable layout");
+  }
+  return byId;
+}
+// Forget the thumbnail centers of a WorkspaceMonitor's windows (its layout came from
+// Cinnamon, so keyboard navigation must be Cinnamon's too).
+function forgetCenters(mon) {
+  for (const c of mon._windows || []) thumbCenters.delete(c);
+}
+
 // Current settings as engine settings, for the algorithm chosen in `algorithmKey`
 // ("algorithm" for Show all windows, "expo-algorithm" for Show all workspaces), with
 // `overrides` on top (Expo's own margin and gap).
@@ -172,14 +190,18 @@ function computeSlots(mon, n) {
   // relative to the monitor area inside Cinnamon's margin (see _getSlotGeometry). The slot is
   // the thumbnail plus its decorations, so _computeWindowLayout places the thumbnail exactly.
   const m = mon._margin, AX = mon._x + m, AY = mon._y + m, AW = mon._width - 2 * m, AH = mon._height - 2 * m;
-  const byId = new Map(res.targets.map(t => [t.id, t]));
+  const byId = checkedTargets(res, windows);
   const widths = [];
   const slots = clones.map(c => {
     const t = byId.get(c.metaWindow.get_stable_sequence());
     const sx = t.x - left, sy = t.y - top, sw = t.w + left + right, sh = t.h + top + bottom;
-    thumbCenters.set(c, [t.x + t.w / 2, t.y + t.h / 2]); // for keyboard navigation
     widths.push(t.w);
     return [(sx + sw / 2 - AX) / AW, (sy + sh / 2 - AY) / AH, sw / AW, sh / AH];
+  });
+  // For keyboard navigation, once the layout is known to be usable.
+  clones.forEach(c => {
+    const t = byId.get(c.metaWindow.get_stable_sequence());
+    thumbCenters.set(c, [t.x + t.w / 2, t.y + t.h / 2]);
   });
   // Cinnamon limits every window title to the same width, _slotWidth. Use the smallest
   // thumbnail width plus the gap, so no title can reach into a neighbor's space (long titles
@@ -235,26 +257,9 @@ function selectInDirection(mon, symbol) {
     const score = ahead + 2 * aside;
     if (score < bestScore) { bestScore = score; best = i; }
   });
-  if (best < 0) return false; // nothing in that direction: not handled (as Cinnamon's original)
+  if (best < 0) return false; // nothing in that direction: not handled (no wrap-around)
   mon.selectIndex(best);
   return true;
-}
-
-// "Restore all settings to their defaults" button in the settings dialog (settings-schema.json
-// "restore-defaults", callback "restoreDefaults"). Cinnamon calls it on the object enable()
-// returns. The defaults are those in settings-schema.json, which match the engine's DEFAULTS.
-function restoreDefaults() {
-  if (!settings) return;
-  const data = settings.settingsData || {};
-  let changed = 0;
-  for (const key of Object.keys(data)) {
-    const entry = data[key];
-    if (entry && typeof entry === "object" && "default" in entry && entry.value !== entry.default) {
-      settings.setValue(key, entry.default);
-      changed++;
-    }
-  }
-  log(`restored defaults (${changed} setting${changed === 1 ? "" : "s"} changed)`);
 }
 
 // Replacement for ExpoWorkspaceThumbnail.overviewModeOn(), called with the thumbnail as `thumb`.
@@ -282,15 +287,11 @@ function expoOverviewModeOn(thumb) {
   const actorOf = w => w.actor || w;
   const duration = Main.animations_enabled ? EXPO_REARRANGE_TIME_ON : 0;
 
-  // Windows that don't belong in the overview shrink away and hide (as in Cinnamon).
-  const shown = [];
-  thumb.windows.forEach(window => {
-    if (thumb.isOverviewWindow(window.metaWindow)) shown.push(window);
-    else actorOf(window).ease({ scale_x: 0, scale_y: 0, duration, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      onComplete: () => actorOf(window).hide() });
-  });
-
-  // One layout per monitor, over that monitor's full area (as in Cinnamon).
+  // Which windows belong in the overview, and one layout per monitor over that monitor's
+  // full area (as in Cinnamon). All layouts are computed and checked before anything moves,
+  // so a failure falls back to Cinnamon's method with nothing half done.
+  const shown = thumb.windows.filter(window => thumb.isOverviewWindow(window.metaWindow));
+  const plans = [];
   Main.layoutManager.monitors.forEach((monitor, monitorIndex) => {
     const mine = shown.filter(w => w.metaWindow.get_monitor() === monitorIndex);
     if (!mine.length) return;
@@ -308,8 +309,17 @@ function expoOverviewModeOn(thumb) {
     const res = cfg.useCache ? cache.compute(windows, area, cfg.algorithm, cfg.S, slotKey)
       : SpreadLayout.compute(windows, area, cfg.algorithm, cfg.S);
     const ms = (GLib.get_monotonic_time() - t0) / 1000;
-    const byId = new Map(res.targets.map(t => [t.id, t]));
+    plans.push({ monitorIndex, mine, frames, res, ms, byId: checkedTargets(res, windows) });
+  });
 
+  // Windows that don't belong in the overview shrink away and hide (as in Cinnamon).
+  thumb.windows.forEach(window => {
+    if (shown.indexOf(window) >= 0) return;
+    actorOf(window).ease({ scale_x: 0, scale_y: 0, duration, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+      onComplete: () => actorOf(window).hide() });
+  });
+
+  for (const { monitorIndex, mine, frames, res, ms, byId } of plans) {
     mine.forEach(window => {
       if (window.inDrag) return;
       window.refreshClone(true);
@@ -339,7 +349,7 @@ function expoOverviewModeOn(thumb) {
       log(`expo, ${name}: ${mine.length} windows, ${cfg.algorithm}, ` +
         `${res.cached ? "reused cached layout" : "computed"} in ${ms.toFixed(1)} ms, score ${res.score.total.toFixed(3)}`);
     }
-  });
+  }
   return true;
 }
 
@@ -348,14 +358,18 @@ function init(metadata) {
 }
 
 function enable() {
+  if (originals) disable(); // enabled again without disable(): start from a clean state
   settings = new Settings.ExtensionSettings({}, extensionMeta.uuid);
   cache = SpreadLayout.createCache();
   thumbCenters = new WeakMap();
   reportedOnce = false;
+  const debug = settings.getValue("debug-log"); // read before anything is patched
 
+  // Each replacement keeps its own reference to Cinnamon's original, so it still works if
+  // something holds on to it after disable().
   const proto = Workspace.WorkspaceMonitor.prototype;
   const expoProto = ExpoThumbnail.ExpoWorkspaceThumbnail.prototype;
-  originals = { computeAllWindowSlots: proto._computeAllWindowSlots, selectAnotherWindow: proto.selectAnotherWindow,
+  const orig = { computeAllWindowSlots: proto._computeAllWindowSlots, selectAnotherWindow: proto.selectAnotherWindow,
     expoOverviewModeOn: expoProto.overviewModeOn };
   proto._computeAllWindowSlots = function (numberOfWindows) {
     try {
@@ -364,7 +378,8 @@ function enable() {
     } catch (e) {
       logError("layout failed, using Cinnamon's grid instead", e);
     }
-    return originals.computeAllWindowSlots.call(this, numberOfWindows);
+    forgetCenters(this);
+    return orig.computeAllWindowSlots.call(this, numberOfWindows);
   };
   proto.selectAnotherWindow = function (symbol) {
     try {
@@ -373,7 +388,7 @@ function enable() {
     } catch (e) {
       logError("keyboard navigation failed, using Cinnamon's instead", e);
     }
-    return originals.selectAnotherWindow.call(this, symbol);
+    return orig.selectAnotherWindow.call(this, symbol);
   };
   expoProto.overviewModeOn = function () {
     try {
@@ -381,15 +396,13 @@ function enable() {
     } catch (e) {
       logError("Expo layout failed, using Cinnamon's grid instead", e);
     }
-    return originals.expoOverviewModeOn.apply(this, arguments);
+    return orig.expoOverviewModeOn.apply(this, arguments);
   };
-  if (settings.getValue("debug-log")) log("enabled");
-  // Functions the settings dialog's buttons can call (by name, from settings-schema.json).
-  return { restoreDefaults };
+  originals = orig;
+  if (debug) log("enabled");
 }
 
 function disable() {
-  if (settings && settings.getValue("debug-log")) log("disabled");
   if (originals) {
     const proto = Workspace.WorkspaceMonitor.prototype;
     proto._computeAllWindowSlots = originals.computeAllWindowSlots;
@@ -397,6 +410,12 @@ function disable() {
     ExpoThumbnail.ExpoWorkspaceThumbnail.prototype.overviewModeOn = originals.expoOverviewModeOn;
     originals = null;
   }
-  if (settings) { settings.finalize(); settings = null; }
+  if (settings) {
+    let debug = false;
+    try { debug = settings.getValue("debug-log"); } catch (e) { /* only for the log line */ }
+    if (debug) log("disabled");
+    settings.finalize();
+    settings = null;
+  }
   cache = null;
 }

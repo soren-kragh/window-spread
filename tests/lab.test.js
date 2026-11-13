@@ -89,6 +89,7 @@ async function run() {
   const h1 = lost.window.document.querySelector('h1');
   ok('opened outside the folder, the page explains that the engine was not found', !!h1 && /engine not found/i.test(h1.textContent));
   dom.window.close(); lost.window.close();
+  (fs.rmSync || fs.rmdirSync).call(fs, tmp, { recursive: true, force: true }); // rmSync: Node 14.14+
 }
 
 module.exports = { run };

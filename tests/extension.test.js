@@ -197,7 +197,7 @@ async function runChecks() {
   ok('Cinnamon\'s loader finds init, enable and disable', ['init', 'enable', 'disable'].every(f => typeof ext[f] === 'function'));
   if (loader.modern) ok('the engine is loaded the modern way (no deprecation warning)', !logs.some(l => l[0] === 'warning' && /deprecated/.test(l[1])));
   ext.init({ uuid: 'window-spread@soren-kragh', path: EXT });
-  const callbacks = ext.enable();
+  ext.enable();
   ok('enable() replaces the two WorkspaceMonitor methods', P._computeAllWindowSlots !== original.slots && P.selectAnotherWindow !== original.select);
 
   section('Cinnamon integration: layout');
@@ -224,7 +224,8 @@ async function runChecks() {
   let clash = 0, off = 0;
   for (const b of boxes) { if (b.x1 < -0.5 || b.y1 < -0.5 || b.x2 > 2560.5 || b.y2 > 1440.5) off++; for (const c of boxes) if (b !== c && b.x1 < c.x2 && c.x1 < b.x2 && b.y1 < c.y2 && c.y1 < b.y2) clash++; }
   ok('thumbnails with their titles and close buttons never overlap and stay on screen', !clash && !off);
-  ok('a minimized window is laid out like the others', placed.filter(p => p.seq === 13)[0].scale > 0);
+  { const unmin = monitor(frames.map(f => Object.assign({}, f, { min: false }))), placedU = place(unmin, P._computeAllWindowSlots.call(unmin, n));
+    ok('a minimized window is laid out like the others (exactly as if it weren\'t minimized)', JSON.stringify(placedU) === JSON.stringify(placed)); }
   const mon2 = monitor(frames.slice().reverse()), placed2 = place(mon2, P._computeAllWindowSlots.call(mon2, n));
   ok('another stacking order gives every window the same place', placed2.every(p => { const q = placed.filter(q => q.seq === p.seq)[0]; return q.x === p.x && q.y === p.y; }));
   ok('window title width limited to the smallest thumbnail plus the gap', mon._slotWidth === Math.floor(Math.min.apply(null, want.map(t => t.w)) + S.spacing), mon._slotWidth + ' px');
@@ -267,7 +268,7 @@ async function runChecks() {
   const moved = P.selectAnotherWindow.call(kb, Clutter.KEY_Right);
   ok('Right arrow moves to a thumbnail to the right', moved === true && centers[kb._windows.indexOf(kb._selected)][0] > centers[leftmost][0]);
   kb._kbWindowIndex = leftmost;
-  ok('Left arrow from the leftmost thumbnail is not handled (as in Cinnamon)', P.selectAnotherWindow.call(kb, Clutter.KEY_Left) === false);
+  ok('Left arrow from the leftmost thumbnail is not handled (nothing in that direction)', P.selectAnotherWindow.call(kb, Clutter.KEY_Left) === false);
   ok('Home key is still handled by Cinnamon\'s own navigation', P.selectAnotherWindow.call(kb, Clutter.KEY_Home) === true);
 
   section('Cinnamon integration: safety');
@@ -275,14 +276,43 @@ async function runChecks() {
   ok('an error falls back to Cinnamon\'s grid and is logged',
     JSON.stringify(P._computeAllWindowSlots.call(bad, n)) === JSON.stringify(original.slots.call(bad, n)) && logs.some(l => l[0] === 'error'));
   ok('a workspace without windows', JSON.stringify(P._computeAllWindowSlots.call(monitor([]), 0)) === '[]');
-
-  section('Cinnamon integration: settings dialog button');
-  ok('enable() returns the function the "Restore defaults" button names', callbacks && typeof callbacks[schema['restore-defaults'].callback] === 'function');
-  const st = settingsNow();
-  st.setValue('margin', 100); st.setValue('w-scale', 1.5); st.setValue('algorithm', 'rows'); st.setValue('rel-mode', 'order'); st.setValue('fill', true);
-  callbacks[schema['restore-defaults'].callback].call(callbacks);
-  ok('pressing it restores every setting to its default', Object.keys(st.settingsData).every(k => st.settingsData[k].value === st.settingsData[k].default),
-    'margin ' + st.getValue('margin') + ', thumbnail size ' + st.getValue('w-scale') + ', algorithm ' + st.getValue('algorithm'));
+  { // a window of size 0 can't be laid out: the engine refuses, and Cinnamon's grid is used
+    const zero = frames.map((f, i) => i === 2 ? Object.assign({}, f, { w: 0, h: 0 }) : f), z = monitor(zero); logs.length = 0;
+    ok('input the engine can\'t lay out (a window of size 0) falls back to Cinnamon\'s grid and is logged',
+      JSON.stringify(P._computeAllWindowSlots.call(z, n)) === JSON.stringify(original.slots.call(monitor(zero), n)) && logs.some(l => l[0] === 'error'));
+  }
+  { // after a fallback, arrow keys follow Cinnamon's grid, not the previous layout
+    const k1 = monitor(frames); P._computeAllWindowSlots.call(k1, n);                  // our layout: centers known
+    k1._windows[2].metaWindow.get_frame_rect = () => ({ x: 0, y: 0, width: 0, height: 0 });
+    P._computeAllWindowSlots.call(k1, n);                                              // now falls back
+    const k2 = monitor(frames); original.slots.call(k2, n);
+    let differ = 0;
+    for (let i = 0; i < n; i++) for (const key of [Clutter.KEY_Left, Clutter.KEY_Right, Clutter.KEY_Up, Clutter.KEY_Down]) {
+      k1._kbWindowIndex = k2._kbWindowIndex = i; k1._selected = k2._selected = null;
+      const a = P.selectAnotherWindow.call(k1, key), b = original.select.call(k2, key);
+      if (a !== b || k1._windows.indexOf(k1._selected) !== k2._windows.indexOf(k2._selected)) differ++;
+    }
+    ok('after falling back to Cinnamon\'s grid, arrow keys move exactly as in Cinnamon', !differ, differ + ' of ' + 4 * n + ' differ');
+  }
+  { // switched off layout caching: the same layout, computed each time
+    const cached = JSON.stringify(P._computeAllWindowSlots.call(monitor(frames, 21), n));
+    settingsNow().setValue('use-cache', false); logs.length = 0; settingsNow().setValue('debug-log', true);
+    const fresh = JSON.stringify(P._computeAllWindowSlots.call(monitor(frames, 21), n));
+    ok('with layout caching off, the same layout is computed (not reused)', fresh === cached && logs.some(l => / computed in /.test(l[1])));
+    settingsNow().setValue('use-cache', true); settingsNow().setValue('debug-log', false);
+  }
+  { // a monitor that is not at 0,0 (e.g. the second one): the same slots, relative to it
+    const shifted = monitor(frames.map(f => Object.assign({}, f, { x: f.x + 2560, y: f.y + 200 })), 22);
+    Object.assign(shifted, { _x: 2560, _y: 200 });
+    const a = P._computeAllWindowSlots.call(monitor(frames, 22), n), b = P._computeAllWindowSlots.call(shifted, n);
+    const dev = Math.max.apply(null, a.map((s, i) => Math.max.apply(null, s.map((v, k) => Math.abs(v - b[i][k])))));
+    ok('a monitor elsewhere gives the same slots (they are relative to the monitor)', dev < 1e-9, 'max deviation ' + dev.toExponential(1));
+  }
+  { // enabled twice without disable() in between (shouldn't happen, but must not break)
+    ext.enable(); ext.enable(); const b2 = monitor(frames); b2._windows[2].metaWindow.get_frame_rect = () => { throw new Error('simulated failure'); };
+    let fine = true; try { fine = JSON.stringify(P._computeAllWindowSlots.call(b2, n)) === JSON.stringify(original.slots.call(b2, n)); } catch (e) { fine = false; }
+    ok('enabled twice in a row: the fallback still reaches Cinnamon\'s own code', fine);
+  }
 
   // ---------------------------------------------------------------- Show all workspaces (Expo)
   section('Cinnamon integration: Show all workspaces (Expo)');
@@ -466,6 +496,11 @@ async function runChecks() {
     expoOriginal.call(a); logs.length = 0; E.overviewModeOn.call(b);
     ok('an error falls back to Cinnamon\'s own Expo arrangement and is logged',
       JSON.stringify(shownOf(a).map(frameOnScreen)) === JSON.stringify(shownOf(b).map(frameOnScreen)) && logs.some(l => l[0] === 'error' && /Expo layout failed/.test(l[1]))); }
+  { const zero = EXPO_SPECS.map((sp, i) => i === 1 ? Object.assign({}, sp, { w: 0, h: 0 }) : sp);
+    const a = expoThumb(zero), b = expoThumb(zero); expoOriginal.call(a); logs.length = 0; E.overviewModeOn.call(b);
+    ok('input the engine can\'t lay out (a window of size 0) falls back to Cinnamon\'s own Expo arrangement',
+      JSON.stringify(shownOf(a).map(frameOnScreen)) === JSON.stringify(shownOf(b).map(frameOnScreen)) &&
+      a.windows.every((w, i) => actorOf(w).eases === actorOf(b.windows[i]).eases) && logs.some(l => l[0] === 'error')); }
   // Edge cases real desktops produce
   { const a = expoThumb(EXPO_SPECS, 6); E.overviewModeOn.call(a); const first = JSON.stringify(shownOf(a).map(frameOnScreen));
     for (const w of a.windows) { w.refreshed = []; w.urgency = 0; w.icon.raised = 0; } a.resets = 0;

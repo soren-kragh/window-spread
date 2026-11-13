@@ -11,10 +11,12 @@
 // To publish: copy <out>/<UUID> into your fork of linuxmint/cinnamon-spices-extensions,
 // run ./validate-spice <UUID> there, and open a pull request.
 "use strict";
-const fs = require("fs"), path = require("path");
+const fs = require("fs"), path = require("path"), { spawnSync } = require("child_process");
 const ROOT = path.join(__dirname, "..");
 
 function fail(msg) { console.error("build-spices: " + msg); process.exit(1); }
+// Remove a folder and its contents (fs.rmSync needs Node 14.14; Mint 21.3 has Node 12).
+function removeDir(p) { if (fs.existsSync(p)) (fs.rmSync || fs.rmdirSync).call(fs, p, { recursive: true, force: true }); }
 function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : null; }
 function copyDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
@@ -46,8 +48,14 @@ if (!pngSize(screenshot)) fail(`${screenshot} is not a PNG file`);
 const out = path.resolve(arg("--out") || path.join(ROOT, "dist", "spices"));
 const target = path.join(out, UUID);
 
+// Files git doesn't track (editor backups, experiments) would ship too: refuse.
+const untracked = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "--", extDir],
+  { cwd: ROOT, encoding: "utf8" });
+if (untracked.status === 0 && untracked.stdout.trim())
+  fail("files in the extension folder that git doesn't track (remove or commit them):\n" + untracked.stdout.trim());
+
 // --- build
-fs.rmSync(target, { recursive: true, force: true });
+removeDir(target);
 fs.mkdirSync(target, { recursive: true });
 fs.copyFileSync(path.join(__dirname, "spices", "info.json"), path.join(target, "info.json"));
 fs.copyFileSync(path.join(__dirname, "spices", "README.md"), path.join(target, "README.md"));
@@ -74,4 +82,4 @@ for (const f of fs.readdirSync(path.join(target, "files", UUID)))
 if (problems.length) fail("the result breaks Spices' rules:\n  " + problems.join("\n  "));
 
 console.log(`Built ${path.relative(process.cwd(), target) || target}`);
-console.log(`Next: copy it into your fork of linuxmint/cinnamon-spices-extensions, run ./validate-spice ${UUID} there, and open a pull request.`);
+console.log(`Next: copy it into your fork of linuxmint/cinnamon-spices-extensions, run ./validate-spice ${UUID} there, and open a pull request (DEVELOPMENT.md, section 9.2).`);

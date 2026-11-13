@@ -8,8 +8,11 @@
    directly, and the lab page (lab/window-spread-lab.html) loads this same file.
 
    Loading
-     Cinnamon 6.0 extension: `const SpreadLayout = require('./spreadLayout');`
-       (Cinnamon's extension loader provides require() and module.exports).
+     Cinnamon extension: on 6.8 and later through
+       `imports.ui.extension.getCurrentExtension().imports.spreadLayout.SpreadLayout`
+       (GJS's native importer exposes the top-level `var SpreadLayout`); on 6.0-6.6
+       `require('./spreadLayout')` (Cinnamon's loader provides require() and
+       module.exports).
      Browser: <script src=".../spreadLayout.js">; defines the global `SpreadLayout`.
      Web Worker: the lab rebuilds the engine from `createSpreadLayout.toString()`.
      Node (tests): `require("./spreadLayout.js")`.
@@ -26,8 +29,8 @@
          the settings of the push-apart and ordered-rows layouts it can start from
          (defaults: DEFAULTS.natural and DEFAULTS.rows).
      SpreadLayout.compute(windows, monitor, algorithm, settings?)
-         windows    [{ id, x, y, w, h }]  real window frames. ids must be unique; any
-                    other fields are ignored.
+         windows    [{ id, x, y, w, h }]  real window frames: finite numbers, sizes
+                    above 0. ids must be unique numbers; other fields are ignored.
          monitor    { x, y, w, h }  the area the spread may use, typically one monitor's
                     work area (without panels), in the same coordinates as the windows.
          algorithm  one of SpreadLayout.ALGORITHMS.
@@ -63,8 +66,10 @@
      - Thumbnails never overlap, keep at least `spacing` px between them, and stay inside
        the monitor area minus `margin`.
      - The optimizer ("anneal") never scores worse than the push-apart and ordered-rows
-       layouts it starts from, when given the same settings as those algorithms
-       (pushStart / rowsStart; gap filling, if on, comes after this comparison).
+       layouts, when given the same settings as those algorithms (pushStart /
+       rowsStart; gap filling, if on, comes after this comparison).
+     - Input it can't lay out (a non-finite number, a window or work area of size 0)
+       makes compute() throw instead of returning an unusable layout.
 
    Not done here (left to the caller)
      - Animation, drawing, input handling, multi-monitor assignment.
@@ -300,6 +305,9 @@ function resolve(R, maxIter, step, aspect, A, rng) {
 // If the real final scale is larger than first guessed, the on-screen gap would be too
 // small: widen the padding to what the real scale needs and push apart again.
 function enforceGap(items, R, A, S) {
+  // Overlaps left when the push-apart hit its pass limit (none otherwise: then this
+  // returns at once)
+  resolve(R, INTERNAL.CLEANUP.iterations, INTERNAL.CLEANUP.step, 0, A, random(INTERNAL.SEED_GAP));
   let pad = R.length ? R[0].w - items[0].lw : 0;
   for (let k = 0; k < INTERNAL.GAP_ROUNDS; k++) {
     const b = bounds(R), s = Math.min(A.w / (b.x2 - b.x1 - pad), A.h / (b.y2 - b.y1 - pad));
@@ -444,13 +452,17 @@ function scoreLayout(T, ws, S, A) {
 function layoutGrid(ws, S, A) {
   const items = prep(ws, { ...S, fidelity: 1 });
   const n = items.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), g = S.spacing;
-  const cw = (A.w - g * (cols - 1)) / cols, ch = (A.h - g * (rows - 1)) / rows;
+  // Gaps between cells; where the gap setting leaves no room for the cells, the gaps
+  // shrink to take half the width (or height).
+  const gx = A.w - g * (cols - 1) > 0 ? g : A.w / 2 / (cols - 1);
+  const gy = A.h - g * (rows - 1) > 0 ? g : A.h / 2 / (rows - 1);
+  const cw = (A.w - gx * (cols - 1)) / cols, ch = (A.h - gy * (rows - 1)) / rows;
   // cell centers, row by row; the last row is centered if it isn't full
   const cells = [];
   for (let i = 0; i < n; i++) {
     const r = Math.floor(i / cols), c = i % cols, inRow = Math.min(cols, n - r * cols);
-    const off = (cols - inRow) * (cw + g) / 2;
-    cells.push({ x: A.x + off + c * (cw + g) + cw / 2, y: A.y + r * (ch + g) + ch / 2 });
+    const off = (cols - inRow) * (cw + gx) / 2;
+    cells.push({ x: A.x + off + c * (cw + gx) + cw / 2, y: A.y + r * (ch + gy) + ch / 2 });
   }
   const cellOf = assignOptimal(items.map(it => cells.map(c => Math.hypot(it.cx - c.x, it.cy - c.y))));
   return items.map((it, k) => {
@@ -476,10 +488,8 @@ function layoutRows(ws, S, A) {
   const items = prep(ws, S), n = items.length, g = S.spacing;
   const byY = items.slice().sort((a, b) => a.cy - b.cy || a.cx - b.cx || a.id - b.id);
   const total = byY.reduce((s, i) => s + i.lw, 0);
-  const fixed = S.rows | 0;
-  const tries = fixed > 0 ? [Math.min(fixed, n)] : Array.from({ length: n }, (_, i) => i + 1);
-  let best = null;
-  for (const r of tries) {
+  // r rows, filled in reading order; s = the scale at which they fit
+  const tryRows = r => {
     const buckets = Array.from({ length: r }, () => []);
     let acc = 0;
     for (const it of byY) { const mid = acc + it.lw / 2; acc += it.lw; buckets[Math.min(r - 1, Math.floor(mid / (total / r)))].push(it); }
@@ -490,8 +500,18 @@ function layoutRows(ws, S, A) {
       sumH += Math.max(...row.map(i => i.lh));
     }
     s = Math.min(s, (A.h - g * (rows.length - 1)) / sumH);
-    if (!best || s > best.s + 1e-9) best = { s, rows };
+    return { s, rows };
+  };
+  const fixed = S.rows | 0;
+  let best = fixed > 0 ? tryRows(Math.min(fixed, n)) : null;
+  if (!best || !(best.s > 0)) { // automatic, also when the fixed row count leaves no room
+    best = null;
+    for (let r = 1; r <= n; r++) {
+      const t = tryRows(r);
+      if (!best || t.s > best.s + 1e-9) best = t;
+    }
   }
+  if (!(best.s > 0)) throw new Error("ordered rows: the gaps leave no room for the windows");
   const { s, rows } = best, out = [];
   const H = rows.reduce((q, row) => q + Math.max(...row.map(i => i.lh)) * s, 0) + g * (rows.length - 1);
   let y = A.cy - H / 2;
@@ -530,7 +550,12 @@ function layoutAnneal(ws, S, A, info, shared) {
       resolve(R, push.iterations, push.step, push.aspect, A, rng);
       shared.push = { items, R: R.map(r => ({ ...r })) };
     } else if (kind === "rows" || kind === "grid") {
-      const T = kind === "rows" ? layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A) : layoutGrid(ws, S, A);
+      let T;
+      try {
+        T = kind === "rows" ? layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A) : layoutGrid(ws, S, A);
+      } catch (e) { // no room for ordered rows: start from the push-apart layout instead
+        return (startCache[kind] = startPos("push"));
+      }
       if (kind === "rows") shared.rows = T;
       const byId = new Map(T.map(t => [t.id, t]));
       let ls = 0;
@@ -823,27 +848,26 @@ function polishLayout(T, ws, S, A) {
   };
 }
 
-// Optimizer safeguard: build the push-apart and ordered-rows layouts it started
-// from (with their own settings, S.pushStart / S.rowsStart), finish them with
-// the same post-steps, and keep whatever scores best. A candidate is polished
-// if either the optimizer or that algorithm polishes, and polishing only ever
-// lowers a score, so the optimizer is never worse than those algorithms. The
-// grid is not a candidate: its uneven scaling is not something the optimizer
-// may produce.
+// Optimizer safeguard: build the push-apart and ordered-rows layouts (with their
+// own settings, S.pushStart / S.rowsStart; whether or not the search started
+// from them), finish them with the same post-steps, and keep whatever scores
+// best. A candidate is polished if either the optimizer or that algorithm
+// polishes, and polishing only ever lowers a score, so the optimizer is never
+// worse than those algorithms. The grid is not a candidate: its uneven scaling
+// is not something the optimizer may produce.
 //
 // Where the search built these layouts as starting points, they come from it
 // (`shared`), identical to building them here. A candidate's polish is skipped
 // when even its best possible polished score could not win (polishLowerBound):
 // the same outcome as polishing it and losing.
 function optimizerSafeguard(T, ws, S, A, info, shared) {
-  const K = Math.max(1, Math.round(S.restarts || 1));
-  const used = S.startFrom === "mixed" ? INTERNAL.START_KINDS.slice(0, Math.min(K, 4)) : [S.startFrom || "push"];
   let best = T, bestScore = scoreLayout(T, ws, S, A).total, from = null;
-  for (const k of used) {
-    if (k !== "push" && k !== "rows") continue;
+  for (const k of ["push", "rows"]) {
     let C;
     if (k === "rows") {
-      C = shared.rows || layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A);
+      try {
+        C = shared.rows || layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A);
+      } catch (e) { continue; } // no room for ordered rows: nothing to compare with
     } else if (shared.push) { // the push-apart algorithm's remaining steps
       const p = shared.push;
       enforceGap(p.items, p.R, A, S);
@@ -967,6 +991,13 @@ function compute(windows, monitor, algorithm, S) {
   if (algorithm === "anneal" && (!S.pushStart || !S.rowsStart)) S = settings(algorithm, S); // fill in start settings
   const ws = windows.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h }));
   const A = workArea(monitor, S.margin), info = {};
+  // Input nothing can be laid out from (and that could make the algorithms misbehave)
+  if (![A.x, A.y, A.w, A.h].every(Number.isFinite) || !(A.w > 0) || !(A.h > 0))
+    throw new Error("no usable area: monitor " + JSON.stringify(monitor) + ", margin " + S.margin);
+  for (const w of ws) {
+    if (![w.id, w.x, w.y, w.w, w.h].every(Number.isFinite) || !(w.w > 0) || !(w.h > 0))
+      throw new Error("unusable window frame: " + JSON.stringify(w));
+  }
   if (!ws.length) return { targets: [], score: null, info };
   const shared = {}; // what the optimizer hands on to its safeguard
   let T = algo.run(ws, S, A, info, shared);

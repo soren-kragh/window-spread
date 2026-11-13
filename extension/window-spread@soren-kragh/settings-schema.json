@@ -13,8 +13,7 @@
       "type": "page",
       "title": "General",
       "sections": [
-        "sec-general",
-        "sec-defaults"
+        "sec-general"
       ]
     },
     "page-layout": {
@@ -61,13 +60,6 @@
       "keys": [
         "use-cache",
         "debug-log"
-      ]
-    },
-    "sec-defaults": {
-      "type": "section",
-      "title": "Defaults",
-      "keys": [
-        "restore-defaults"
       ]
     },
     "sec-scale-enable": {
@@ -174,12 +166,6 @@
     "default": true,
     "description": "Layout caching",
     "tooltip": "Reuses the previous arrangement of a workspace when its windows and the settings haven't changed since, which keeps the views quick; the result is the same either way. Focusing other windows, changing the stacking order, or minimizing and restoring windows don't count as changes. Leave this on; switching it off is only useful for troubleshooting."
-  },
-  "restore-defaults": {
-    "type": "button",
-    "description": "Restore all settings to their defaults",
-    "callback": "restoreDefaults",
-    "tooltip": "Sets every setting on this page back to its default value."
   },
   "debug-log": {
     "type": "switch",

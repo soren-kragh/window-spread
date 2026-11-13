@@ -28,10 +28,14 @@ DEVELOPMENT.md                    this file
 lab/window-spread-lab.html        browser lab: simulated desktop, tuner
 extension/window-spread@soren-kragh/
   spreadLayout.js                 THE layout engine; the only copy
-  extension.js                    Cinnamon glue: patches the Scale view
+  extension.js                    Cinnamon glue: patches Scale and Expo
   settings-schema.json            settings dialog definition (generated)
   metadata.json                   extension metadata
-tools/build-schema.js             generates settings-schema.json from DEFAULTS
+  icon.png, LICENSE               icon (from docs/icon.svg), license copy
+docs/                             icon source, screenshot
+tools/build-schema.js             generates settings-schema.json
+tools/build-spices.js             builds the Spices package (section 9)
+tools/spices/                     Spices' README and info.json
 tests/                            automated checks (section 7)
 ```
 
@@ -45,10 +49,12 @@ Rules (each one fixed a real problem):
   paste engine code anywhere else. Consequence: the lab only works from inside
   this folder.
 * **Defaults live in the engine.** `DEFAULTS` (section 1 of `spreadLayout.js`)
-  is the only place default values are defined. The lab reads them from there.
-  `settings-schema.json` needs its own copy for Cinnamon's dialog, so it is
-  generated: after changing a default, run `node tools/build-schema.js`. A
-  test fails if the two differ.
+  is the only place the layout defaults are defined. The lab reads them from
+  there. Settings that exist only in the settings dialog (each view's
+  algorithm, Show all workspaces' margin and gap) have their defaults in
+  `tools/build-schema.js`. `settings-schema.json` needs its own copy for
+  Cinnamon's dialog, so it is generated: after changing a default, run
+  `node tools/build-schema.js`. A test fails if the two differ.
 * **The engine knows nothing about the DOM, Cinnamon, or stacking.** Its input
   is window frames `{id, x, y, w, h}` and a monitor rectangle; any other fields
   are ignored.
@@ -142,8 +148,20 @@ covers this case). Details:
 * **Minimized windows** are passed with their normal frame like any other
   window.
 * **Settings** are read on every layout (cheap); the cache key includes them, so
-  changes take effect at the next opening. The "Restore defaults" button calls
-  `restoreDefaults` on the object `enable()` returns.
+  changes take effect at the next opening. Resetting them is left to the
+  dialog's own menu item, **Reset to defaults**: an extension button calling
+  `setValue` for every key wrote the settings file once per key, which raced
+  with the dialog's own file watching and saving, so some settings stayed
+  unreset.
+* **Unusable results:** the engine's targets are checked (one per window,
+  finite, sizes above 0) before Cinnamon gets them; anything else, like an
+  error, falls back to Cinnamon's own layout, and keyboard navigation then
+  follows Cinnamon's grid too. Expo computes and checks the layouts of all
+  monitors before it moves anything.
+* **Lifecycle:** `enable()` reads the settings before it patches anything, and
+  each replacement keeps its own reference to Cinnamon's original, so a call
+  after `disable()` still reaches Cinnamon's code. A second `enable()` without
+  `disable()` first disables.
 * **Diagnostics** (setting "Write diagnostics to the log"): one line per
   workspace per opening (indexes, visible workspace name, counts, cache use,
   time, score), minimized window frames, and the decoration sizes once per
@@ -202,18 +220,27 @@ control are in the `INFO` object and the `*_UI` tables (section L2/L3 of the lab
 script). The lab's default settings come from the engine.
 
 
-## 4. Guarantees (all covered by tests)
+## 4. Guarantees (covered by tests, at defaults and at the ends of the ranges)
 
 * No stacking order, focus, or minimized state is ever used; input order doesn't
   matter.
 * Deterministic: same input and settings, same output.
-* No overlaps; gaps at least `spacing`; everything inside the monitor minus
-  `margin`; scale at most `maxScale`.
+* No overlaps; everything inside the monitor minus `margin` (to 0.5 px); scale
+  at most `maxScale`; finite positions and sizes above 0.
+* Gaps at least `spacing`, unless the gap is too large for the screen and the
+  number of windows (tested up to an effective gap of 58 px, the default gap
+  plus decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
+  1366×768 screen) push-apart's overlap removal stops short and gaps can be
+  smaller; the equal grid shrinks its gaps when they would leave no room for
+  the cells; ordered rows with a fixed row count that doesn't fit uses the best
+  row count instead.
 * push-apart, rows and the optimizer use one shared scale (exact relative sizes
   at fidelity 1).
 * The optimizer never scores worse than push-apart or ordered rows given the
-  same settings (`pushStart`, `rowsStart`), as long as it starts from them
-  (directly or via "mixed") and gap filling is off.
+  same settings (`pushStart`, `rowsStart`), whatever it starts from, as long as
+  gap filling is off.
+* Input that can't be laid out (a non-finite number, a window or work area of
+  size 0) is an error, not an unusable layout.
 
 
 ## 5. Design decisions and the evidence behind them
@@ -384,7 +411,7 @@ switch in one section and everything else in a section hidden while the switch
 is off, and settings inside keep their own conditions (equal grid, fill gaps).
 Supported in the dialog of Cinnamon 6.0.5 to 6.8.0 (`add_reveal_section`).
 Remaining corner case: max growth follows fill gaps only, so it stays visible if
-fill gaps is on and the equal grid is then chosen. so no scrolling is needed.
+fill gaps is on and the equal grid is then chosen.
 (Custom widgets were considered: more code, more fragile.)
 
 ### 5.14 No spin button with the value 0
@@ -575,6 +602,10 @@ Tested against the source of the latest release of each series (as of November
     works the same way.
   * `_computeWindowLayout()` no longer rounds positions down, so thumbnails land
     exactly where the engine puts them (0.00 px deviation in the tests).
+  * New `prepareOverviewGesture()` (for touchpad gestures) also calls
+    `_computeAllWindowSlots()` and `_computeWindowLayout()`: the same layout,
+    usually from the cache, and one more diagnostics line per gesture. Not
+    covered by a test.
 * `cinnamon-version` in `metadata.json` lists **minimum** versions (Cinnamon's
   `versionCheck()`, unchanged from 6.0 to 6.8), so `"6.0"` alone would cover
   all of these. It lists every tested series anyway (6.0 to 6.8), so anyone
@@ -594,6 +625,9 @@ Via the diagnostics log:
   4 windows 5-11 ms, 8 windows 8-12 ms (before 5.18: 4 windows 12-15 ms, 8
   windows 13-17 ms); 21 windows 22-24 ms. Earlier, before the engine's
   speed-ups: about 22 ms for 6 windows. Cache hits: about 0.2 ms.
+* Margins at 0 in both views: no window title or close button is cut off at the
+  screen edge (checked 2026-11-13; a review had calculated that titles might
+  overhang).
 * The first layout computed when a view opens takes 5-7 ms longer than the
   same layout computed later in that opening, whichever workspace it is (tested
   by making another workspace the only one to recompute). A cost in Cinnamon
@@ -603,14 +637,18 @@ Via the diagnostics log:
 ## 7. Testing
 
 Run everything with `node tests/run-all.js` (Mint: `sudo apt install nodejs`).
-About 140 checks, a few seconds. Against several Cinnamon versions at once:
+About 150 checks, a few seconds. Against several Cinnamon versions at once:
 `node tests/run-versions.js` (default: the latest of each series from 6.0 to
 6.8) or `node tests/run-versions.js 6.8.1 6.8.2` for specific ones.
 
-* `tests/engine.test.js`: the guarantees for all algorithms, uniform scale,
-  monitors elsewhere, the optimizer safeguard, the cache, rebuilding from the
-  factory, and the grid's nearest-cell assignment (against brute force, also the
-  Hungarian method on its own with ties and negative costs).
+* `tests/engine.test.js`: the guarantees for all algorithms, at the defaults
+  and with settings at the ends of their ranges on small and offset monitors
+  (all-maximized and oversized windows, fill gaps, the order method, fixed row
+  counts, the fewest push-apart passes), errors for input that can't be laid
+  out, `score()`, uniform scale, monitors elsewhere, the optimizer safeguard
+  whatever it starts from, the cache, rebuilding from the factory, and the
+  grid's nearest-cell assignment (against brute force, also the Hungarian
+  method on its own with ties and negative costs).
 * `tests/schema.test.js`: `settings-schema.json` equals the generator's output;
   defaults match the engine; the extension reads exactly the defined settings;
   widget types and required fields as Cinnamon's dialog and `settings.js`
@@ -632,9 +670,11 @@ About 140 checks, a few seconds. Against several Cinnamon versions at once:
   every algorithm, switched-off equals Cinnamon exactly, error fallback, and
   edge cases (repeated calls, empty monitor, oversized window, 30 windows). Then
   it checks that Cinnamon's own fitting code places thumbnails where the engine
-  says, decorations never collide, stacking has no effect, caching per
-  workspace, diagnostics, keyboard navigation, error fallback, the restore
-  button, and that disabling restores the originals.
+  says, decorations never collide, stacking and minimizing have no effect,
+  caching per workspace and caching switched off, a monitor not at 0,0,
+  diagnostics, keyboard navigation, fallback on errors and on input the engine
+  refuses (also for keyboard navigation and Expo), a second `enable()`, and
+  that disabling restores the originals.
 * `tests/lab.test.js`: the lab in a simulated browser (needs `jsdom`, see the
   file; skipped otherwise).
 
@@ -646,8 +686,10 @@ GitHub into `tests/.cinnamon-src/`. The output notes whether the files match
 
 **Checking a new Cinnamon version:** run `node tests/run-versions.js <version>`
 (or `node tests/run-all.js` on the upgraded system). If it fails, compare the
-version's `js/ui/workspace.js` (the five methods in section 3) and its extension
-loader (`js/misc/fileUtils.js`, `js/ui/extension.js`) with the last version that
+version's `js/ui/workspace.js` (the five `WorkspaceMonitor` methods listed at
+the top of `tests/extension.test.js`), `js/ui/expoThumbnail.js`
+(`overviewModeOn()`; the tests fingerprint it) and its extension loader
+(`js/misc/fileUtils.js`, `js/ui/extension.js`) with the last version that
 passed. If a new release changes the loader again, `makeLoader()` in
 `tests/extension.test.js` needs a matching branch, built from that version's
 real code like the existing two.
@@ -795,7 +837,7 @@ In the clone of your fork (`cd ../cinnamon-spices-extensions`):
 3. Run `node tests/run-all.js`.
 4. Replace the installed copy with the two commands under "Updating" in README's
    Install section (delete the old folder, then copy), and restart Cinnamon
-   (Alt+F2, `r`). If defaults changed, press "Restore all settings to their
-   defaults" in the extension's settings.
+   (Alt+F2, `r`). If defaults changed, choose **Reset to defaults** in the
+   settings window's menu (top right).
 5. Record new decisions and evidence in section 5 of this file.
 6. To publish a release: section 9.2.

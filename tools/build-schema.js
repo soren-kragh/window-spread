@@ -8,7 +8,6 @@ const path=require('path');
 const EXT=path.join(__dirname,'..','extension','window-spread@soren-kragh');
 const SL=require(path.join(EXT,'spreadLayout.js'));
 const D=SL.DEFAULTS;
-const sec=(description,dependency)=>({type:'section',description,...(dependency?{dependency}:{})});
 const scale=(group,key,description,min,max,step,tooltip,extra={})=>({type:'scale',default:D[group][key],min,max,step,description,tooltip,...extra});
 const spin=(group,key,description,min,max,step,units,tooltip,extra={})=>({type:'spinbutton',default:D[group][key],min,max,step,units,description,tooltip,...extra});
 const sw=(group,key,description,tooltip,extra={})=>({type:'switch',default:D[group][key],description,tooltip,...extra});
@@ -36,8 +35,6 @@ const schema={
       'same either way. Focusing other windows, changing the stacking order, or '+
       'minimizing and restoring windows don\'t count as changes. Leave this on; '+
       'switching it off is only useful for troubleshooting.'},
-  'restore-defaults':{type:'button',description:'Restore all settings to their defaults',callback:'restoreDefaults',
-    tooltip:'Sets every setting on this page back to its default value.'},
   'debug-log':{type:'switch',default:false,description:'Write diagnostics to the log',tooltip:'Writes information for troubleshooting to the log. View it in Looking Glass (Alt+F2, then lg) under Log.'},
 
   'margin':spin('common','margin','Margin around the screen edge',0,200,4,'px','Empty border kept around the edge of the screen.'),
@@ -100,14 +97,13 @@ for(const v of Object.values(schema)) if(v.units==='') delete v.units;
 // Pages (tabs) and sections of the settings window. Short pages, so the window never needs
 // scrolling: scrolling over a slider changes the slider instead (python3-xapp's Range widget).
 const layout={type:'layout',pages:['page-general','page-layout','page-expo','page-scoring','page-optimizer','page-push'],
-  'page-general':{type:'page',title:'General',sections:['sec-general','sec-defaults']},
+  'page-general':{type:'page',title:'General',sections:['sec-general']},
   'page-layout':{type:'page',title:'Show all windows',sections:['sec-scale-enable','sec-layout']},
   'page-expo':{type:'page',title:'Show all workspaces',sections:['sec-expo-enable','sec-expo']},
   'page-scoring':{type:'page',title:'Scoring',sections:['sec-scoring']},
   'page-optimizer':{type:'page',title:'Optimizer',sections:['sec-optimizer']},
   'page-push':{type:'page',title:'Push-apart & rows',sections:['sec-natural','sec-rows']},
   'sec-general':{type:'section',title:'General',keys:['use-cache','debug-log']},
-  'sec-defaults':{type:'section',title:'Defaults',keys:['restore-defaults']},
   // Each view: the Enable switch in its own section, everything else in a section that is hidden
   // while the switch is off (settings inside can still have their own conditions).
   'sec-scale-enable':{type:'section',title:'Show all windows (Scale)',keys:['scale-enabled']},

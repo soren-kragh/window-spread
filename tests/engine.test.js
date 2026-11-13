@@ -124,20 +124,85 @@ async function run() {
     ok('a monitor elsewhere (e.g. a second monitor) gives the same layout, shifted', dev < 1e-6, 'max deviation ' + dev.toExponential(1) + ' px');
   }
 
+  section('Engine: settings at the edges of their ranges, small and odd monitors');
+  {
+    // Monitors as the extension passes them (after decorations), one of them not at 0,0;
+    // windows random, all maximized (identical centers), or bigger than the monitor.
+    const MONS = [{ x: 1920, y: 300, w: 1338, h: 718 }, { x: 0, y: 0, w: 1052, h: 1870 }];
+    const SETS = [{}, { margin: 0 }, { margin: 200 }, { spacing: 0 }, { spacing: 58 }, { spacing: 130 },
+      { fidelity: 0 }, { maxScale: 0.2 }, { centered: true }, { fill: true, growLimit: 3 }, { relMode: 'order' },
+      { wRel: 0, wDisp: 0 }];
+    const ALGS = [['anneal', {}], ['anneal', { restarts: 1, startFrom: 'rows' }], ['natural', {}],
+      ['natural', { iterations: 10 }], ['rows', {}], ['rows', { rows: 1 }], ['rows', { rows: 8 }], ['grid', {}]];
+    const frames = (mon, n, kind, seed) => {
+      const r = SL.random(seed);
+      return Array.from({ length: n }, (_, i) => {
+        if (kind === 'max') return { id: i + 1, x: mon.x, y: mon.y, w: mon.w, h: mon.h };
+        const big = kind === 'big', w = big ? mon.w * 1.3 : 200 + r() * 1100, h = big ? mon.h * 1.2 : 150 + r() * 700;
+        return { id: i + 1, x: Math.round(mon.x + r() * Math.max(1, mon.w - w)), y: Math.round(mon.y + r() * Math.max(1, mon.h - h)),
+          w: Math.round(w), h: Math.round(h) };
+      });
+    };
+    let runs = 0, unusable = 0, overlaps = 0, tight = 0, outside = 0, tooBig = 0, threw = [], seed = 1;
+    for (const mon of MONS) for (const S0 of SETS) for (const [alg, ov] of ALGS) for (const n of [1, 2, 6, 14]) for (const kind of ['rand', 'max', 'big']) {
+      const S = SL.settings(alg, Object.assign(alg === 'anneal' ? { iterations: 1500 } : {}, S0, ov));
+      let T; runs++;
+      try { T = SL.compute(frames(mon, n, kind, seed++), mon, alg, S).targets; }
+      catch (e) { threw.push(alg + ' ' + JSON.stringify(Object.assign({}, S0, ov)) + ': ' + e.message); continue; }
+      const A = { x: mon.x + S.margin, y: mon.y + S.margin, w: mon.w - 2 * S.margin, h: mon.h - 2 * S.margin };
+      for (const a of T) {
+        if (![a.x, a.y, a.w, a.h].every(Number.isFinite) || !(a.w > 0 && a.h > 0)) { unusable++; continue; }
+        if (a.x < A.x - 0.5 || a.y < A.y - 0.5 || a.x + a.w > A.x + A.w + 0.5 || a.y + a.h > A.y + A.h + 0.5) outside++;
+        if (a.scale > S.maxScale + 1e-9) tooBig++;
+        for (const b of T) if (a.id < b.id) {
+          const gap = Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h)));
+          if (gap < -0.01) overlaps++;
+          else if (gap < S.spacing - 0.01 && S.spacing <= 58) tight++; // larger gaps: see the guarantees in the engine
+        }
+      }
+    }
+    ok('every layout is usable: finite positions, sizes above 0 (also with a fixed row count or a gap that leaves no room)',
+      !unusable && !threw.length, runs + ' layouts' + (threw.length ? '; threw: ' + threw[0] : ''));
+    ok('no overlaps, inside the margin, scale within the limit', !overlaps && !outside && !tooBig,
+      overlaps + ' overlaps, ' + outside + ' outside, ' + tooBig + ' too big');
+    ok('gaps at least the setting, up to the decorations of the default gap (58 px)', !tight, tight + ' pairs too close');
+    const crowded = { x: 0, y: 0, w: 1338, h: 718 }, many = frames(crowded, 24, 'rand', 99);
+    const fixed1 = SL.compute(many, crowded, 'rows', SL.settings('rows', { rows: 1, spacing: 58 })).targets;
+    ok('ordered rows with a fixed row count that leaves no room falls back to the best row count',
+      fixed1.every(t => t.w > 0) && new Set(fixed1.map(t => Math.round(t.y))).size > 1);
+    let passes10 = 0;
+    for (const n of [8, 16, 24]) for (const s of [1, 2, 3, 4]) {
+      const T = SL.compute(frames({ x: 0, y: 0, w: 2532, h: 1390 }, n, 'rand', 500 + n * 10 + s), { x: 0, y: 0, w: 2532, h: 1390 },
+        'natural', SL.settings('natural', { iterations: 10, spacing: 58 })).targets;
+      for (const a of T) for (const b of T) if (a.id < b.id &&
+        Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h))) < 58 - 0.01) passes10++;
+    }
+    ok('push-apart with its fewest passes (10) still keeps the gap', !passes10, passes10 + ' pairs too close');
+    const bad = [[{ id: 1, x: 0, y: 0, w: 0, h: 0 }], [{ id: 1, x: NaN, y: 0, w: 10, h: 10 }]];
+    const throwsFor = (ws, mon, S) => { try { SL.compute(ws, mon, 'natural', S); return false; } catch (e) { return true; } };
+    ok('a window of size 0, a non-finite number, or a margin that leaves no area is an error, not an unusable layout',
+      bad.every(ws => throwsFor(ws, MON)) &&
+      throwsFor(desk(1, 3), { x: 0, y: 0, w: 300, h: 300 }, SL.settings('natural', { margin: 200 })));
+    const ws5 = desk(5, 6), S5 = SL.settings('natural', { relMode: 'order' }), r5 = SL.compute(ws5, MON, 'natural', S5);
+    ok('score() gives the same score as compute() returned',
+      Math.abs(SL.score(r5.targets.map(t => Object.assign({ ow: ws5.find(w => w.id === t.id).w, oh: ws5.find(w => w.id === t.id).h }, t)), ws5, MON, S5).total - r5.score.total) < 1e-9);
+  }
+
   section('Engine: optimizer safeguard');
   {
     let lostPush = 0, lostRows = 0, runs = 0;
-    for (const step of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) {
+    const starts = [[3, 'mixed'], [1, 'mixed'], [3, 'push'], [3, 'grid']];
+    for (const step of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) for (const [restarts, startFrom] of starts) {
       const ws = desk(n + rowsCount, n);
       const nat = SL.settings('natural', { step }), rows = SL.settings('rows', { rows: rowsCount });
-      const opt = SL.settings('anneal', { iterations: 3000, restarts: 3, startFrom: 'mixed',
+      const opt = SL.settings('anneal', { iterations: 3000, restarts, startFrom,
         pushStart: { iterations: nat.iterations, step: nat.step, aspect: nat.aspect, polish: nat.polish }, rowsStart: { rows: rowsCount } });
       const a = SL.compute(ws, MON, 'anneal', opt).score.total; runs++;
       if (SL.compute(ws, MON, 'natural', nat).score.total < a - 1e-9) lostPush++;
       if (SL.compute(ws, MON, 'rows', rows).score.total < a - 1e-9) lostRows++;
     }
-    ok('the optimizer never scores worse than push-apart or ordered rows with the same settings',
-      !lostPush && !lostRows, runs + ' runs, push strength and row count varied');
+    ok('the optimizer never scores worse than push-apart or ordered rows with the same settings, whatever it starts from',
+      !lostPush && !lostRows, runs + ' runs, push strength, row count, starts varied');
   }
 
   section('Engine: cache');
