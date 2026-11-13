@@ -343,18 +343,6 @@ function expoOverviewModeOn(thumb) {
   return true;
 }
 
-// Warn if settings-schema.json defaults and the engine's DEFAULTS have drifted apart.
-function checkDefaults() {
-  const data = settings.settingsData || {};
-  for (const [key, group, engineKey, unit] of SETTINGS_MAP.concat(EXPO_SETTINGS_MAP)) {
-    const entry = data[key];
-    const def = entry && "default" in entry ? (unit ? entry.default * unit : entry.default) : undefined;
-    if (def !== undefined && def !== SpreadLayout.DEFAULTS[group][engineKey])
-      log(`warning: settings-schema.json default for "${key}" (${entry.default}) differs from the engine's ` +
-        `DEFAULTS.${group}.${engineKey} (${SpreadLayout.DEFAULTS[group][engineKey]})`);
-  }
-}
-
 function init(metadata) {
   extensionMeta = metadata;
 }
@@ -364,7 +352,6 @@ function enable() {
   cache = SpreadLayout.createCache();
   thumbCenters = new WeakMap();
   reportedOnce = false;
-  checkDefaults();
 
   const proto = Workspace.WorkspaceMonitor.prototype;
   const expoProto = ExpoThumbnail.ExpoWorkspaceThumbnail.prototype;
@@ -396,12 +383,13 @@ function enable() {
     }
     return originals.expoOverviewModeOn.apply(this, arguments);
   };
-  log("enabled");
+  if (settings.getValue("debug-log")) log("enabled");
   // Functions the settings dialog's buttons can call (by name, from settings-schema.json).
   return { restoreDefaults };
 }
 
 function disable() {
+  if (settings && settings.getValue("debug-log")) log("disabled");
   if (originals) {
     const proto = Workspace.WorkspaceMonitor.prototype;
     proto._computeAllWindowSlots = originals.computeAllWindowSlots;
@@ -411,5 +399,4 @@ function disable() {
   }
   if (settings) { settings.finalize(); settings = null; }
   cache = null;
-  log("disabled");
 }

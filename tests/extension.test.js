@@ -199,7 +199,6 @@ async function runChecks() {
   ext.init({ uuid: 'window-spread@soren-kragh', path: EXT });
   const callbacks = ext.enable();
   ok('enable() replaces the two WorkspaceMonitor methods', P._computeAllWindowSlots !== original.slots && P.selectAnotherWindow !== original.select);
-  ok('settings-schema.json defaults agree with the engine (no warning logged)', !logs.some(l => l[1].indexOf('differs') >= 0));
 
   section('Cinnamon integration: layout');
   const mon = monitor(frames), slots = P._computeAllWindowSlots.call(mon, n);

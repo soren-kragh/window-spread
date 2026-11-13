@@ -47,9 +47,8 @@ Rules (each one fixed a real problem):
 * **Defaults live in the engine.** `DEFAULTS` (section 1 of `spreadLayout.js`)
   is the only place default values are defined. The lab reads them from there.
   `settings-schema.json` needs its own copy for Cinnamon's dialog, so it is
-  generated: after changing a default, run `node tools/build-schema.js`. The
-  extension also compares the two at startup and logs a warning if they differ,
-  and a test fails.
+  generated: after changing a default, run `node tools/build-schema.js`. A
+  test fails if the two differ.
 * **The engine knows nothing about the DOM, Cinnamon, or stacking.** Its input
   is window frames `{id, x, y, w, h}` and a monitor rectangle; any other fields
   are ignored.
@@ -577,7 +576,10 @@ Tested against the source of the latest release of each series (as of November
   * `_computeWindowLayout()` no longer rounds positions down, so thumbnails land
     exactly where the engine puts them (0.00 px deviation in the tests).
 * `cinnamon-version` in `metadata.json` lists **minimum** versions (Cinnamon's
-  `versionCheck()`, unchanged from 6.0 to 6.8), so `"6.0"` covers all of these.
+  `versionCheck()`, unchanged from 6.0 to 6.8), so `"6.0"` alone would cover
+  all of these. It lists every tested series anyway (6.0 to 6.8), so anyone
+  reading it (users, Spices) sees what is tested; add a series once it has been
+  tested (section 7).
 
 ### 6.2 Measured on the target system
 
@@ -670,25 +672,120 @@ The target system's checks are in README's "Checking that it works".
 
 ## 9. Publishing
 
-* **GitHub** (`soren-kragh/window-spread`): the repository as it is. The
-  README's Install section is written for visitors who just want to copy the
-  extension folder. `docs/screenshot.png` (a screenshot of Show all windows) is
-  shown at the top of the README and is also needed for Spices.
-* **Cinnamon Spices**: `node tools/build-spices.js` builds `dist/spices/<UUID>/`
-  in the structure Spices requires (`info.json` and a Spices-specific README
-  from `tools/spices/`, `screenshot.png` from `docs/`, and `files/<UUID>/` = the
-  extension folder). It checks the result against Spices' rules, the same as
-  their `validate-spice` script. Copy that folder into your fork of
-  `linuxmint/cinnamon-spices-extensions`, run `./validate-spice <UUID>` there,
-  and open a pull request. `tests/spices.test.js` runs the real `validate-spice`
-  on a build (needs python3 with PIL; Mint: `python3-pil`). Spices forbids
-  pointing users to downloads elsewhere, so the Spices README links to the
-  repository only for bug reports and development.
-* **Icon**: `docs/icon.svg` is the source; render it to the extension's
-  `icon.png` at 256×256 (square, as Spices requires).
-* **License**: MIT-0 (`LICENSE`, also inside the extension folder so the Spices
-  copy states it explicitly; the Spices repository's own default is GPL version
-  2).
+Cinnamon Spices is where users get the extension: Cinnamon's own Extensions
+dialog (Download tab) installs and updates from it. GitHub holds the source;
+its main branch is the development state. A release is a pull request to the
+Spices repository that gets merged; no GitHub Releases are made.
+
+**Version:** `version` in `metadata.json`. It is for people, not for Cinnamon,
+which notices updates from Spices by itself. Raise it for each Spices release
+and tag that commit `v<version>`, so it is clear which commit users have.
+
+**Files:**
+
+* `node tools/build-spices.js` builds `dist/spices/<UUID>/` in the structure
+  Spices requires: `info.json` and a Spices-specific `README.md` from
+  `tools/spices/`, `screenshot.png` from `docs/`, and `files/<UUID>/` = the
+  extension folder. It checks the result against Spices' rules, the same as
+  their `validate-spice` script. `tests/spices.test.js` runs the real
+  `validate-spice` on a build (needs python3 with PIL; Mint: `python3-pil`).
+* `info.json` names the author by GitHub username (`soren-kragh`). Spices
+  reviews pull requests from the author more lightly than from others.
+* The Spices README may link to the repository only for bug reports and
+  development: Spices forbids pointing users to downloads elsewhere. The GitHub
+  README's Install section is for visitors who want the latest source.
+* `docs/screenshot.png` (Show all windows in use) is shown on GitHub and on the
+  Spices website.
+* Icon: `docs/icon.svg` is the source; render it to the extension's `icon.png`
+  at 256×256 (square, as Spices requires).
+* License: MIT-0 (`LICENSE`, also inside the extension folder so the Spices
+  copy states it explicitly; the Spices repository's own default is GPL
+  version 2).
+
+### 9.1 One-time setup for Spices
+
+1. On GitHub, open `https://github.com/linuxmint/cinnamon-spices-extensions`
+   and click **Fork**. This makes your own copy,
+   `soren-kragh/cinnamon-spices-extensions`, which you can push to.
+2. Clone your fork next to this repository (the commands below assume both are
+   in the same folder) and connect it to the original:
+
+   ```
+   git clone https://github.com/soren-kragh/cinnamon-spices-extensions.git
+   cd cinnamon-spices-extensions
+   git remote add upstream \
+     https://github.com/linuxmint/cinnamon-spices-extensions.git
+   ```
+
+3. Read the rules once: the repository's `README.md` and
+   `.github/CONTRIBUTING.md`. Since this code was written with AI help, also
+   read `.github/copilot-instructions.md` (the reviewers' checklist; they ask
+   AI-assisted authors to review their code against it before submitting).
+
+### 9.2 Making a release
+
+In this repository:
+
+1. Make sure everything is committed and `node tests/run-all.js` passes.
+2. Raise `version` in `metadata.json`, commit, tag and push:
+
+   ```
+   git tag v1.0
+   git push
+   git push --tags
+   ```
+
+3. Build the Spices folder: `node tools/build-spices.js`.
+
+In the clone of your fork (`cd ../cinnamon-spices-extensions`):
+
+4. Bring it up to date and start a branch for this release:
+
+   ```
+   git checkout master
+   git pull upstream master
+   git checkout -b window-spread-1.0
+   ```
+
+5. Replace the extension's folder with the new build and check it:
+
+   ```
+   rm -rf window-spread@soren-kragh
+   cp -r ../window-spread/dist/spices/window-spread@soren-kragh .
+   ./validate-spice window-spread@soren-kragh
+   ```
+
+6. Commit and push. The message must start with the extension's identifier and
+   a colon, or Spices closes the pull request:
+
+   ```
+   git add window-spread@soren-kragh
+   git commit -m "window-spread@soren-kragh: Add extension"
+   git push -u origin window-spread-1.0
+   ```
+
+   For later releases, say what changed, e.g.
+   `"window-spread@soren-kragh: 1.1, faster layouts"`.
+7. Open your fork on GitHub; it offers **Compare & pull request** for the new
+   branch. Check that it goes to `linuxmint/cinnamon-spices-extensions`, branch
+   `master`, give it the same title as the commit, describe the release in a
+   few lines, and create it. One pull request per extension.
+8. Wait for the review. Spices' automatic check runs first; reviewers may ask
+   for changes. To make them: fix and commit here, rebuild (step 3), then in
+   the fork's clone, still on the same branch, repeat step 5 and commit with a
+   message like `"window-spread@soren-kragh: Address review"`, followed by a
+   plain `git push`. The pull request updates by itself.
+9. Once merged, the release is on the Spices website and in Cinnamon's
+   Extensions dialog, and users who have the extension get an update. Delete
+   the branch (GitHub offers a button on the pull request).
+
+### 9.3 After the first release
+
+* Change the GitHub README's Install section to recommend installing from
+  System Settings → Extensions → Download, keeping the copy-from-git steps for
+  the latest development version.
+* Spices users report bugs as issues in the Spices repository, titled
+  `window-spread@soren-kragh: ...` and mentioning you, as its guidelines ask.
 
 ## 10. Workflow for changes
 
@@ -701,6 +798,4 @@ The target system's checks are in README's "Checking that it works".
    (Alt+F2, `r`). If defaults changed, press "Restore all settings to their
    defaults" in the extension's settings.
 5. Record new decisions and evidence in section 5 of this file.
-6. To publish a new version: raise `version` in `metadata.json`, push to GitHub,
-   and for Spices rebuild with `node tools/build-spices.js` and open a pull
-   request (section 9).
+6. To publish a release: section 9.2.
