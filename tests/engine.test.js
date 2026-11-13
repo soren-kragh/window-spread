@@ -75,6 +75,16 @@ async function run() {
     const Tg = SL.compute(desk(3, 9), MON, 'grid').targets, sg = Tg.map(t => t.scale);
     ok('the equal grid scales windows unevenly (and is charged for it in the score)',
       Math.max.apply(null, sg) / Math.min.apply(null, sg) > 1.05 && SL.compute(desk(3, 9), MON, 'grid').score.sizes > 0);
+    // a few small windows on a big screen: all held at the max scale (DEVELOPMENT.md 5.4)
+    const few = [{ id: 1, x: 100, y: 100, w: 400, h: 300 }, { id: 2, x: 900, y: 500, w: 700, h: 500 }, { id: 3, x: 300, y: 650, w: 250, h: 200 }];
+    let held = true, charged = false;
+    for (const alg of ['optimizer', 'push', 'rows']) for (const maxScale of [0.9, 1]) {
+      const r = SL.compute(few, MON, alg, quick(alg, { maxScale }));
+      if (!r.targets.every(t => Math.abs(t.scale - maxScale) < 1e-9)) held = false;
+      if (r.score.sizes !== 0 || Math.abs(r.score.size + SL.DEFAULTS.scoring.wSize * Math.log(maxScale)) > 1e-12) charged = true;
+    }
+    ok('thumbnails held at the max scale (few small windows) count as their intended size: no uneven-size charge',
+      held && !charged);
   }
 
   section('Engine: equal grid cell assignment');
@@ -214,6 +224,11 @@ async function run() {
     ok('a window of size 0, a non-finite number, or a margin that leaves no area is an error, not an unusable layout',
       bad.every(ws => throwsFor(ws, MON)) &&
       throwsFor(desk(1, 3), { x: 0, y: 0, w: 300, h: 300 }, SL.settings('push', { margin: 200 })));
+    const refused = ov => { try { SL.compute(desk(1, 4), MON, 'optimizer', SL.settings('optimizer', ov)); return false; } catch (e) { return /unusable setting/.test(e.message); } };
+    const badSettings = [{ maxScale: 0 }, { fidelity: NaN }, { gap: -1 }, { firstStep: 0 }, { checkpoint: 0 },
+      { relationsMethod: 'angles' }, { startFrom: 'top' }, { steps: 0 }, { pushStart: { passes: 1000, strength: 0, matchShape: 0.5, polish: true } }];
+    ok('settings outside their allowed values are an error, not an unusable layout',
+      badSettings.every(refused) && !refused({ maxScale: 0.2, fidelity: 0, gap: 0, checkpoint: 1, neighborFocus: 1 }), badSettings.length + ' cases');
     const ws5 = desk(5, 6), S5 = SL.settings('push', { relationsMethod: 'order' }), r5 = SL.compute(ws5, MON, 'push', S5);
     ok('score() gives the same score as compute() returned',
       Math.abs(SL.score(r5.targets.map(t => Object.assign({ ow: ws5.find(w => w.id === t.id).w, oh: ws5.find(w => w.id === t.id).h }, t)), ws5, MON, S5).total - r5.score.total) < 1e-9);
@@ -222,14 +237,14 @@ async function run() {
   section('Engine: optimizer safeguard');
   {
     let lostPush = 0, lostRows = 0, runs = 0;
-    const starts = [[3, 'mixed'], [1, 'mixed'], [3, 'push'], [3, 'grid']];
-    for (const step of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) for (const [nStarts, startFrom] of starts) {
+    const starts = [[3, 'mixed'], [1, 'mixed'], [3, 'push'], [3, 'rows'], [3, 'grid'], [3, 'none']];
+    for (const strength of [0.1, 0.3, 0.9]) for (const rowsCount of [0, 2]) for (const n of [4, 9, 13]) for (const [nStarts, startFrom] of starts) {
       const ws = desk(n + rowsCount, n);
-      const nat = SL.settings('push', { strength: step }), rows = SL.settings('rows', { rows: rowsCount });
+      const push = SL.settings('push', { strength }), rows = SL.settings('rows', { rows: rowsCount });
       const opt = SL.settings('optimizer', { steps: 300, starts: nStarts, startFrom,
-        pushStart: { passes: nat.passes, strength: nat.strength, matchShape: nat.matchShape, polish: nat.polish }, rowsStart: { rows: rowsCount } });
+        pushStart: { passes: push.passes, strength: push.strength, matchShape: push.matchShape, polish: push.polish }, rowsStart: { rows: rowsCount } });
       const a = SL.compute(ws, MON, 'optimizer', opt).score.total; runs++;
-      if (SL.compute(ws, MON, 'push', nat).score.total < a - 1e-9) lostPush++;
+      if (SL.compute(ws, MON, 'push', push).score.total < a - 1e-9) lostPush++;
       if (SL.compute(ws, MON, 'rows', rows).score.total < a - 1e-9) lostRows++;
     }
     ok('the optimizer never scores worse than push-apart or ordered rows with the same settings, whatever it starts from',

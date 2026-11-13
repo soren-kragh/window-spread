@@ -33,9 +33,9 @@
      with the grid calculation written inline. So this extension replaces the whole
      method with a version that does the same steps (hide windows that don't belong,
      refresh clones, size app icons, animate) with positions from the engine. Its own
-     settings (algorithm, margin, gap, size fidelity, max scale, centering, gap filling)
-     apply; it can be switched off separately. With both views switched off, Cinnamon
-     behaves exactly as without the extension.
+     settings (algorithm, margin, gap, size fidelity, max scale, centering, gap filling
+     and its maximum growth) apply; it can be switched off separately. With both views
+     switched off, Cinnamon behaves exactly as without the extension.
      overviewModeOff() (back to real positions) is unchanged.
 
    Lifecycle (called by Cinnamon): init(metadata) once when loaded; enable() when
@@ -53,7 +53,7 @@ const GLib = imports.gi.GLib;
 //   Cinnamon 6.8 and later: extensions are loaded by GJS's native importer, and local files
 //   are reached through Extension.getCurrentExtension().imports (require() still works there
 //   but is deprecated and logs a warning).
-//   Cinnamon 6.0: getCurrentExtension() doesn't exist; Cinnamon's loader provides require().
+//   Cinnamon 6.0-6.6: getCurrentExtension() doesn't exist; Cinnamon's loader provides require().
 function loadEngine() {
   const ExtensionModule = imports.ui.extension;
   if (ExtensionModule && typeof ExtensionModule.getCurrentExtension === "function") {
@@ -104,6 +104,7 @@ let cache = null;           // engine layout cache: last layout per monitor and 
 let originals = null;       // Cinnamon's original methods, restored by disable()
 let reportedOnce = false;   // decorations already logged this session
 let thumbCenters = new WeakMap(); // window clone -> its thumbnail center, for keyboard navigation
+let errorsLogged = new Set(); // failures already logged since enable()
 
 // Algorithm names as the settings window shows them, for the log.
 const ALGORITHM_NAMES = {
@@ -113,6 +114,14 @@ const windowCount = n => n + (n === 1 ? " window" : " windows");
 
 function log(msg) { global.log(LOG_PREFIX + msg); }
 function logError(msg, e) { global.logError(LOG_PREFIX + msg + (e ? ": " + e + (e.stack ? "\n" + e.stack : "") : "")); }
+// A failure in a replaced method would repeat on every hover or key press; log each
+// distinct one only the first time (until the extension is enabled again).
+function logFailure(msg, e) {
+  const key = msg + ": " + e;
+  if (errorsLogged.has(key)) return;
+  errorsLogged.add(key);
+  logError(msg + " (repeats of this aren't logged)", e);
+}
 
 // The engine's targets for `windows`, checked: one per window, at finite positions with
 // positive sizes. Anything else throws, so the caller falls back to Cinnamon's own layout
@@ -366,11 +375,13 @@ function init(metadata) {
 }
 
 function enable() {
-  if (originals) disable(); // enabled again without disable(): start from a clean state
+  // enabled again without disable(), or after a failed enable(): start from a clean state
+  if (originals || settings) disable();
   settings = new Settings.ExtensionSettings({}, extensionMeta.uuid);
   cache = SpreadLayout.createCache();
   thumbCenters = new WeakMap();
   reportedOnce = false;
+  errorsLogged = new Set();
   const debug = settings.getValue("debug-log"); // read before anything is patched
 
   // Each replacement keeps its own reference to Cinnamon's original, so it still works if
@@ -384,7 +395,7 @@ function enable() {
       const slots = computeSlots(this, numberOfWindows);
       if (slots) return slots;
     } catch (e) {
-      logError("layout failed, using Cinnamon's grid instead", e);
+      logFailure("layout failed, using Cinnamon's grid instead", e);
     }
     forgetCenters(this);
     return orig.computeAllWindowSlots.call(this, numberOfWindows);
@@ -394,7 +405,7 @@ function enable() {
       const handled = selectInDirection(this, symbol);
       if (handled !== null) return handled;
     } catch (e) {
-      logError("keyboard navigation failed, using Cinnamon's instead", e);
+      logFailure("keyboard navigation failed, using Cinnamon's instead", e);
     }
     return orig.selectAnotherWindow.call(this, symbol);
   };
@@ -402,7 +413,7 @@ function enable() {
     try {
       if (expoOverviewModeOn(this)) return;
     } catch (e) {
-      logError("Expo layout failed, using Cinnamon's grid instead", e);
+      logFailure("Expo layout failed, using Cinnamon's grid instead", e);
     }
     return orig.expoOverviewModeOn.apply(this, arguments);
   };

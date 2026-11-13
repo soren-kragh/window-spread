@@ -31,22 +31,57 @@ async function run() {
   const extRoot = path.join(ROOT, 'extension'), UUID = fs.readdirSync(extRoot)[0], extDir = path.join(extRoot, UUID);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spices-'));
   try {
-    const build = args => spawnSync(process.execPath, [path.join(ROOT, 'tools', 'build-spices.js')].concat(args), { encoding: 'utf8' });
+    const build = (args, root) => spawnSync(process.execPath, [path.join(root || ROOT, 'tools', 'build-spices.js')].concat(args), { encoding: 'utf8' });
 
     const noShot = build(['--screenshot', path.join(tmp, 'missing.png'), '--out', tmp]);
     ok('without a screenshot, the build refuses with an explanation', noShot.status !== 0 && /screenshot/.test(noShot.stderr));
 
     // a placeholder screenshot (any PNG) stands in for the real one
-    const res = build(['--screenshot', path.join(extDir, 'icon.png'), '--out', tmp]);
+    // (uncommitted changes allowed here: the tests run while work is in progress; the
+    // refusal itself is tested on a clone below)
+    const res = build(['--screenshot', path.join(extDir, 'icon.png'), '--out', tmp, '--allow-uncommitted']);
     ok('the build succeeds and passes its own checks', res.status === 0, (res.stderr || '').trim());
     const target = path.join(tmp, UUID);
     ok('top level holds exactly info.json, README.md, screenshot.png and files/',
       fs.readdirSync(target).sort().join(',') === 'README.md,files,info.json,screenshot.png');
     ok('files/ holds only the ' + UUID + ' folder', fs.readdirSync(path.join(target, 'files')).join(',') === UUID);
-    const a = listFiles(extDir), b = listFiles(path.join(target, 'files', UUID));
-    ok('files/' + UUID + '/ is exactly the extension folder (same files, same contents)',
+    const tracked = spawnSync('git', ['ls-files', '--', '.'], { cwd: extDir, encoding: 'utf8' }).stdout.split('\n').filter(Boolean).sort();
+    const a = tracked.length ? tracked : listFiles(extDir), b = listFiles(path.join(target, 'files', UUID));
+    ok('files/' + UUID + '/ is exactly the extension folder as git tracks it (same files, same contents)',
       a.join() === b.join() && a.every(f => fs.readFileSync(path.join(extDir, f)).equals(fs.readFileSync(path.join(target, 'files', UUID, f)))), a.join(', '));
     ok('info.json names the author', JSON.parse(fs.readFileSync(path.join(target, 'info.json'), 'utf8')).author === 'soren-kragh');
+
+    // Only committed files ship: checked on a clone of the last commit, with this
+    // build tool, so the repository itself is never touched.
+    const clone = path.join(tmp, 'clone');
+    const cl = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', ROOT, clone], { encoding: 'utf8' });
+    if (cl.status !== 0) skip('a build from changes that aren\'t committed is refused', 'git clone failed: ' + cl.stderr.trim());
+    else {
+      fs.copyFileSync(path.join(ROOT, 'tools', 'build-spices.js'), path.join(clone, 'tools', 'build-spices.js'));
+      const cExt = path.join(clone, 'extension', UUID), cOut = path.join(tmp, 'clone-out');
+      const shot = ['--screenshot', path.join(cExt, 'icon.png'), '--out', cOut];
+      const clean = build(shot, clone);
+      fs.mkdirSync(path.join(cExt, 'node_modules'));
+      fs.writeFileSync(path.join(cExt, 'node_modules', 'junk.js'), ''); // ignored by .gitignore
+      const ignored = build(shot, clone), allowed = build(shot.concat('--allow-uncommitted'), clone);
+      const shipped = fs.existsSync(path.join(cOut, UUID, 'files', UUID, 'node_modules'));
+      (fs.rmSync || fs.rmdirSync).call(fs, path.join(cExt, 'node_modules'), { recursive: true, force: true });
+      fs.appendFileSync(path.join(cExt, 'extension.js'), '\n');
+      const edited = build(shot, clone);
+      ok('a build from changes that aren\'t committed is refused (ignored files, edits); only tracked files ship',
+        clean.status === 0 && ignored.status !== 0 && /aren't committed/.test(ignored.stderr) &&
+        allowed.status === 0 && !shipped && edited.status !== 0);
+    }
+
+    // Outside a git clone (an unpacked ZIP): the whole extension folder is used.
+    const zip = path.join(tmp, 'zip'), zExt = path.join(zip, 'extension', UUID), zOut = path.join(tmp, 'zip-out');
+    fs.mkdirSync(path.join(zip, 'tools', 'spices'), { recursive: true }); fs.mkdirSync(zExt, { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'tools', 'build-spices.js'), path.join(zip, 'tools', 'build-spices.js'));
+    for (const f of fs.readdirSync(path.join(ROOT, 'tools', 'spices'))) fs.copyFileSync(path.join(ROOT, 'tools', 'spices', f), path.join(zip, 'tools', 'spices', f));
+    for (const f of a) fs.copyFileSync(path.join(extDir, f), path.join(zExt, f));
+    const z = build(['--screenshot', path.join(zExt, 'icon.png'), '--out', zOut], zip);
+    ok('outside a git clone (an unpacked ZIP), the build uses the whole extension folder',
+      z.status === 0 && /Not in a git clone/.test(z.stdout) && listFiles(path.join(zOut, UUID, 'files', UUID)).join() === a.join(), (z.stderr || '').trim());
 
     // Spices' own validator
     const pil = spawnSync('python3', ['-c', 'import PIL'], { encoding: 'utf8' });

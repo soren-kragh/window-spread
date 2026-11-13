@@ -51,10 +51,11 @@ Rules (each one fixed a real problem):
 * **Defaults live in the engine.** `DEFAULTS` (section 1 of `spreadLayout.js`)
   is the only place the layout defaults are defined. The lab reads them from
   there. Settings that exist only in the settings dialog (each view's
-  algorithm, Show all workspaces' margin and gap) have their defaults in
-  `tools/build-schema.js`. `settings-schema.json` needs its own copy for
-  Cinnamon's dialog, so it is generated: after changing a default, run
-  `node tools/build-schema.js`. A test fails if the two differ.
+  algorithm, Show all workspaces' margin and gap, the Enable switches, layout
+  caching and diagnostics) have their defaults in `tools/build-schema.js`.
+  `settings-schema.json` needs its own copy for Cinnamon's dialog, so it is
+  generated: after changing a default, run `node tools/build-schema.js`. A
+  test fails if the two differ.
 * **The engine knows nothing about the DOM, Cinnamon, or stacking.** Its input
   is window frames `{id, x, y, w, h}` and a monitor rectangle; any other fields
   are ignored.
@@ -92,9 +93,10 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
    the real windows, as far as the work area allows (5.2).
 3. **Polish** (optimizer, push): greedy small moves into free space that
    lower the score (5.2; how it is kept cheap: 5.18).
-4. **Safeguard** (optimizer): the push-apart and rows layouts the optimizer
-   started from are finished the same way, and the best-scoring layout wins
-   (5.7). It reuses those layouts from the search, and skips polishing a
+4. **Safeguard** (optimizer): the push-apart and ordered-rows layouts, with
+   those algorithms' settings, are finished the same way (whether or not the
+   search started from them), and the best-scoring layout wins (5.7). It reuses
+   those layouts from the search where it built them, and skips polishing a
    candidate that provably can't win (5.18).
 5. **Fill gaps** (optional): thumbnails grow into free space.
 6. **Score.**
@@ -109,7 +111,8 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
 and all comparisons): `wSize × size + wSizes × distortion + wPlace × movement +
 wRelations × relations` (+ an overlap term that only matters during the
 search). Size is the mean of −ln(scale) after removing the intended
-size-fidelity factor.
+size-fidelity factor; a thumbnail held at the max scale counts as large as the
+largest one that isn't (5.4).
 Distortion is the mean absolute deviation of log scales (0 for one shared
 scale). Movement is the mean distance from real centers, relative to the screen
 diagonal. Relations come in two methods: "order" (left/right, above/below flips,
@@ -172,9 +175,9 @@ covers this case). Details:
   after `disable()` still reaches Cinnamon's code. A second `enable()` without
   `disable()` first disables.
 * **Diagnostics** (setting "Write diagnostics to the log"): one line per
-  workspace per opening (indexes, visible workspace name, counts, cache use,
-  time, score), minimized window frames, and the decoration sizes once per
-  session.
+  workspace per opening (indexes, visible workspace name, counts, algorithm,
+  cache use, time, score), minimized window frames, and the decoration sizes
+  once per session.
 
 **Show all workspaces (Expo).** Each workspace thumbnail is an
 `ExpoWorkspaceThumbnail`; its `overviewModeOn()` arranges that workspace's
@@ -215,7 +218,8 @@ whose completion callbacks are what make windows and icons visible again.
   `expo-enabled`); with both off, behavior equals Cinnamon's original exactly
   (tested: slots, title width, every arrow key, Expo positions, badges and
   visibility). On both view tabs, settings the equal grid doesn't use are hidden
-  while it is selected (`dependency: "algorithm!=grid"`). Switched off,
+  while it is selected (`dependency: "algorithm!=grid"`, and
+  `"expo-algorithm!=grid"` on the Show all workspaces tab). Switched off,
   Cinnamon's original runs. Errors fall back to the original. Cache slots
   `expo/<monitor>/<workspace>`, separate from Scale's.
 
@@ -230,6 +234,10 @@ script). The lab's default settings come from the engine.
 
 
 ## 4. Guarantees (covered by tests, at defaults and at the ends of the ranges)
+
+The optimizer is tested at reduced effort to keep the tests fast; its effort
+only changes how far the search gets, not what the guarantees rely on (the
+cleanup, gap enforcement and safeguard run the same at any effort).
 
 * No stacking order, focus, or minimized state is ever used; input order doesn't
   matter.
@@ -557,7 +565,8 @@ then separates (as in analytical chip placement); the step size shrinks from
 `firstStep` (0.3 of the average window size) to 0.0002. One start per starting
 layout (push apart, ordered rows, equal grid, real positions), racing (5.3);
 then the unchanged cleanup, gap enforcement, polish and safeguard. Nothing is
-random with up to four starts, so the result doesn't depend on the seed.
+random with "mixed" starts and up to four of them (the default), so the result
+doesn't depend on the seed.
 
 Evidence: 294 desktops of 3-30 windows (random sizes on 2560×1440, mixed sizes
 on 1920×1080, small windows on 2560×1440); the old optimizer at 5k and 10k moves
@@ -608,11 +617,11 @@ that charged thumbnails held at the max scale for uneven sizes, with extra steps
 to steer the descent back below the limit: made obsolete by 5.4.
 
 Settings: only the effort remains in the extension's settings window. Starts,
-first checkpoint, step size (was temperature), start from, seed, dropping weak
-starts and polish are fixed; the lab keeps them. Without polish, the mean gap
-was 3.3% instead of 1.4% (3.2% instead of 0.7% at 3-5 windows) and 27 desktops
-instead of 7 were more than 10% from the best, for about 12% of the time, so it
-is always on.
+first checkpoint, first step size (was temperature), start from, seed,
+dropping weak starts and polish are fixed; the lab keeps them. Without polish,
+the mean gap was 3.3% instead of 1.4% (3.2% instead of 0.7% at 3-5 windows)
+and 27 desktops instead of 7 were more than 10% from the best, for about 12% of
+the time, so it is always on.
 
 Push apart's pass limit ("Effort (passes)", default 1000) left the settings
 window too: push apart stops as soon as nothing overlaps, and on the same 294
@@ -622,6 +631,23 @@ what a desktop needs only leaves overlaps for the cruder final cleanup. It
 stays in the engine as a safety limit, and in the lab. Push apart's polish is
 always on as well (it lowers push apart's score by 3-9%, 5.18, and push apart
 is also the optimizer's safeguard candidate); the lab keeps the switch.
+
+The figures in 5.3 and in this section are each measured against the best
+score of their own set of runs, so they differ slightly for the same desktops,
+and they predate 5.21.
+
+### 5.21 The search's own gap estimate
+The gap must be chosen in layout units before the final scale is known, from a
+guess of how much of the screen the thumbnails will cover (`DENSITY_GUESS`,
+50%). Gradient descent packs to about 75%, so its scale came out larger than
+guessed and the gap during the search 10-28% wider than the setting; the polish
+then closed the gap, but the scale was already chosen too small. The search now
+pads for 75% (`DENSITY_SEARCH`); the starting layouts keep push apart's padding,
+so the push-apart start (and the safeguard's candidate) is still exactly the
+push-apart algorithm. On the 294 desktops of 5.20 at 1000 steps, mean gap to
+the best: 1.11% → 0.86% with the default gap (better on 180 desktops, worse on
+51), 1.41% → 0.79% with 58 px (the default gap plus decorations; 170 better,
+53 worse); the same time; push apart, ordered rows and equal grid unchanged.
 
 
 ## 6. Verified facts about Cinnamon 6.0.5
@@ -656,8 +682,14 @@ in `tests/lib/cinnamon.js`).
   supported widget types include switch, scale, spinbutton, combobox, button,
   section, layout pages; `dependency` supports `key`, `!key` and comparisons
   (`=`, `!=`, `<`, ...). A layout must be the file's first entry. Saved values
-  live in `~/.config/cinnamon/spices/<uuid>/`; when the schema changes, saved
-  values are kept and only new settings get defaults.
+  live in `~/.config/cinnamon/spices/<uuid>/`. When the schema changes (any
+  byte, so every release that touches it), saved values are kept, new settings
+  get defaults, and values that fail Cinnamon's check go back to the default:
+  a drop-down value no longer offered, and on 6.0-6.6 also a value at either
+  end of its range (`val < max && val > min` in `settings.js`; 6.8 accepts the
+  ends). So a user's largest thumbnail scale of 1, a margin or gap of 0, a
+  weight of 0 or an effort of 1 or 100 is reset by such an update; the release
+  notes should say so (9.2).
 * **Expo** ("Show all workspaces") is separate: `js/ui/expoThumbnail.js`,
   `ExpoWorkspaceThumbnail.overviewModeOn()`, has its own grid per monitor
   (spacing 14) and also orders windows by stacking ("top-to-bottom order"),
@@ -732,7 +764,7 @@ Via the diagnostics log:
 ## 7. Testing
 
 Run everything with `node tests/run-all.js` (Mint: `sudo apt install nodejs`).
-About 150 checks, a few seconds. Against several Cinnamon versions at once:
+About 160 checks, a few seconds. Against several Cinnamon versions at once:
 `node tests/run-versions.js` (default: the latest of each series from 6.0 to
 6.8) or `node tests/run-versions.js 6.8.1 6.8.2` for specific ones.
 
@@ -740,10 +772,12 @@ About 150 checks, a few seconds. Against several Cinnamon versions at once:
   and with settings at the ends of their ranges on small and offset monitors
   (all-maximized and oversized windows, fill gaps, the order method, fixed row
   counts, the fewest push-apart passes), errors for input that can't be laid
-  out, `score()`, uniform scale, monitors elsewhere, the optimizer safeguard
-  whatever it starts from, the cache, rebuilding from the factory, and the
-  grid's nearest-cell assignment (against brute force, also the Hungarian
-  method on its own with ties and negative costs).
+  out and for settings outside their allowed values, `score()`, uniform scale,
+  thumbnails held at the max scale not charged for uneven sizes, always
+  centering, monitors elsewhere, the optimizer safeguard whatever it starts
+  from, the cache, rebuilding from the factory, and the grid's nearest-cell
+  assignment (against brute force, also the Hungarian method on its own with
+  ties and negative costs).
 * `tests/schema.test.js`: `settings-schema.json` equals the generator's output;
   defaults match the engine; the extension reads exactly the defined settings;
   widget types and required fields as Cinnamon's dialog and `settings.js`
@@ -768,11 +802,16 @@ About 150 checks, a few seconds. Against several Cinnamon versions at once:
   says, decorations never collide, stacking and minimizing have no effect,
   caching per workspace and caching switched off, a monitor not at 0,0,
   diagnostics, keyboard navigation, fallback on errors and on input the engine
-  refuses (also for keyboard navigation and Expo), a second `enable()`, and
+  refuses (also for keyboard navigation and Expo), a repeated failure logged
+  only once, a second `enable()` (also after one that failed half-way), and
   that disabling restores the originals.
 * `tests/lab.test.js`: the lab in a simulated browser (needs `jsdom`, see the
   file; skipped otherwise).
-
+* `tests/spices.test.js`: `tools/build-spices.js` builds a package with exactly
+  the extension's committed files, refuses uncommitted changes and stray files
+  (tried on a temporary clone), uses the whole folder outside a git clone (an
+  unpacked ZIP), and Spices' own `validate-spice` accepts it (needs python3
+  with PIL; skipped otherwise).
 Cinnamon sources: the installed files in `/usr/share/cinnamon` are used if
 present; otherwise (or with `CINNAMON_SOURCE=download`) the version from
 `cinnamon --version` (or `CINNAMON_VERSION`, default 6.0.5) is downloaded from
@@ -790,7 +829,7 @@ passed. If a new release changes the loader again, `makeLoader()` in
 real code like the existing two.
 
 Not testable here: a real Cinnamon session (rendering, animation, real input).
-The target system's checks are in README's "Checking that it works".
+The checks on the target system are in README's "Troubleshooting".
 
 
 ## 8. Open items
@@ -863,7 +902,8 @@ and tag that commit `v<version>`, so it is clear which commit users have.
 
 In this repository:
 
-1. Make sure everything is committed and `node tests/run-all.js` passes.
+1. Make sure everything is committed and `node tests/run-all.js` passes (the
+   build in step 3 refuses uncommitted changes in the extension folder).
 2. Raise `version` in `metadata.json`, commit, tag and push:
 
    ```
@@ -906,7 +946,10 @@ In the clone of your fork (`cd ../cinnamon-spices-extensions`):
 7. Open your fork on GitHub; it offers **Compare & pull request** for the new
    branch. Check that it goes to `linuxmint/cinnamon-spices-extensions`, branch
    `master`, give it the same title as the commit, describe the release in a
-   few lines, and create it. One pull request per extension.
+   few lines, and create it. One pull request per extension. If
+   `settings-schema.json` changed since the last release, mention that on
+   Cinnamon 6.0-6.6 settings left at either end of their range go back to their
+   defaults (section 6), so users should check them.
 8. Wait for the review. Spices' automatic check runs first; reviewers may ask
    for changes. To make them: fix and commit here, rebuild (step 3), then in
    the fork's clone, still on the same branch, repeat step 5 and commit with a

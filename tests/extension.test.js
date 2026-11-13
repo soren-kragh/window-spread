@@ -165,7 +165,8 @@ async function runChecks() {
     for (const k of Object.keys(schema)) if ('default' in schema[k]) this.settingsData[k] = Object.assign({}, schema[k], { value: schema[k].default });
     instances.push(this);
   }
-  ExtensionSettings.prototype.getValue = function (k) { if (!(k in this.settingsData)) throw new Error('unknown key ' + k); return this.settingsData[k].value; };
+  // as Cinnamon's: an unknown key logs an error and gives null
+  ExtensionSettings.prototype.getValue = function (k) { if (!(k in this.settingsData)) { cinGlobal.logError('could not find setting ' + k); return null; } return this.settingsData[k].value; };
   ExtensionSettings.prototype.setValue = function (k, v) { if (!(k in this.settingsData)) throw new Error('unknown key ' + k); this.settingsData[k].value = v; };
   ExtensionSettings.prototype.finalize = function () { this.finalized = true; };
   const settingsNow = () => instances[instances.length - 1];
@@ -274,6 +275,8 @@ async function runChecks() {
   const bad = monitor(frames); bad._windows[2].metaWindow.get_frame_rect = () => { throw new Error('simulated failure'); }; logs.length = 0;
   ok('an error falls back to Cinnamon\'s grid and is logged',
     JSON.stringify(P._computeAllWindowSlots.call(bad, n)) === JSON.stringify(original.slots.call(bad, n)) && logs.some(l => l[0] === 'error'));
+  P._computeAllWindowSlots.call(bad, n); P._computeAllWindowSlots.call(bad, n);
+  ok('the same failure again (as on every hover) is not logged again', logs.filter(l => l[0] === 'error').length === 1);
   ok('a workspace without windows', JSON.stringify(P._computeAllWindowSlots.call(monitor([]), 0)) === '[]');
   { // a window of size 0 can't be laid out: the engine refuses, and Cinnamon's grid is used
     const zero = frames.map((f, i) => i === 2 ? Object.assign({}, f, { w: 0, h: 0 }) : f), z = monitor(zero); logs.length = 0;
@@ -311,6 +314,14 @@ async function runChecks() {
     ext.enable(); ext.enable(); const b2 = monitor(frames); b2._windows[2].metaWindow.get_frame_rect = () => { throw new Error('simulated failure'); };
     let fine = true; try { fine = JSON.stringify(P._computeAllWindowSlots.call(b2, n)) === JSON.stringify(original.slots.call(b2, n)); } catch (e) { fine = false; }
     ok('enabled twice in a row: the fallback still reaches Cinnamon\'s own code', fine);
+  }
+  { // an enable() that failed after creating its settings: the next one cleans up first
+    ext.disable(); const before = instances.length; const realExpo = imports.ui.expoThumbnail.ExpoWorkspaceThumbnail;
+    imports.ui.expoThumbnail.ExpoWorkspaceThumbnail = undefined; let threw = false;
+    try { ext.enable(); } catch (e) { threw = true; }
+    imports.ui.expoThumbnail.ExpoWorkspaceThumbnail = realExpo; ext.enable();
+    ok('after an enable() that failed half-way, the next enable() finalizes the leftover settings',
+      threw && instances.length === before + 2 && instances[before].finalized === true && !instances[before + 1].finalized);
   }
 
   // ---------------------------------------------------------------- Show all workspaces (Expo)

@@ -128,13 +128,12 @@ You should see:
   workspace each time windows are arranged there (hovering a workspace, for
   example).
 
+Errors are logged whether or not diagnostics are on, also in
+`~/.xsession-errors`; the same error is logged only once until Cinnamon
+restarts. Switch the diagnostics off again afterwards; they aren't needed for
+normal use.
+
 The extension's home is https://github.com/soren-kragh/window-spread.
-
-If something goes wrong in the layout, the extension logs an error and falls
-back to Cinnamon's original arrangement for that time, so the view keeps
-working. Errors also appear in Looking Glass, and in `~/.xsession-errors`.
-
-Switch the diagnostics off again afterwards; they aren't needed for normal use.
 
 
 ## What's in this repository
@@ -185,9 +184,9 @@ folder, with the folder structure intact; if it can't find the engine, it says
 so.
 
 The lab's simulated desktop is 1920×1080. On a real desktop, the gap between
-thumbnails is a little larger than the lab shows, because Cinnamon draws a title
-below each thumbnail and a close button at a corner, and the extension leaves
-room for them.
+thumbnails is larger than the lab shows (on the author's system 58 px instead
+of 8), because Cinnamon draws a title below each thumbnail and a close button
+at a corner, and the extension leaves room for them.
 
 
 ## Changing the extension yourself

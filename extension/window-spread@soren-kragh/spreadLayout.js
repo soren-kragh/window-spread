@@ -52,7 +52,7 @@
      SpreadLayout.score(targets, windows, monitor, settings)
          Score any layout (lower is better), with the same parts as above. With `centered`,
          compute() scores its layout before the final centering, so scoring its targets
-         here can give a different (worse) movement part.
+         here can give a different (usually worse) movement part.
      SpreadLayout.random(seed)
          The engine's deterministic random generator (returns a function giving [0, 1)).
          Exposed for generating reproducible test data.
@@ -65,13 +65,15 @@
      - Only window positions and sizes are read. Stacking order and focus history are
        never used: windows are processed in an order derived from geometry alone.
      - Deterministic: the same input and settings always give the same result.
-     - Thumbnails never overlap, keep at least `gap` px between them, and stay inside
+     - Thumbnails never overlap, keep at least `gap` px between them (unless the gap
+       leaves no room on the monitor; see DEVELOPMENT.md section 4), and stay inside
        the monitor area minus `margin`.
      - The optimizer never scores worse than the push-apart and ordered-rows
        layouts, when given the same settings as those algorithms (pushStart /
        rowsStart; gap filling, if on, comes after this comparison).
-     - Input it can't lay out (a non-finite number, a window or work area of size 0)
-       makes compute() throw instead of returning an unusable layout.
+     - Input it can't lay out (a non-finite number, a window or work area of size 0, a
+       setting outside its allowed values, see LIMITS) makes compute() throw instead of
+       returning an unusable layout.
 
    Not done here (left to the caller)
      - Animation, drawing, input handling, multi-monitor assignment.
@@ -116,7 +118,7 @@ const DEFAULTS = {
     starts: 4,         // parallel starts racing each other
     checkpoint: 0.2,   // point of the schedule (0..1) where the first weak starts are dropped
     firstStep: 0.3,    // first step size (x average window size): how far windows may jump early on
-    seed: 1,           // random seed (shakes starts beyond the four kinds); same seed + same input = same result
+    seed: 1,           // random seed for shaking starts whose kind is taken (with "mixed": beyond the four kinds)
     dropWeakStarts: true, // drop the worse half of the starts at each checkpoint
     polish: true,      // greedy final polish
     startFrom: "mixed", // "push" | "rows" | "grid" | "none" (real positions) | "mixed" (one kind per start)
@@ -151,6 +153,7 @@ const INTERNAL = {
   CLEANUP: { passes: 2000, strength: 0.5 },         // final overlap removal
   // Gap handling: the gap must be chosen in unscaled units before the final scale is known.
   DENSITY_GUESS: 0.5,                                // expected share of the screen covered, for the first gap guess
+  DENSITY_SEARCH: 0.75,                              // the same for the optimizer's search, which packs tighter
   GAP_ROUNDS: 8,                                     // max rounds of widening the gap until it is right
   GAP_OVERSHOOT: 1.003,                              // widen slightly more than needed, to converge quickly
   // Seeds used only to break exact ties (windows with identical centers)
@@ -164,7 +167,7 @@ const INTERNAL = {
   GD_SMOOTH_CAP: 0.02,                               // softness of the size term's corner at the max scale (ln scale)
   GD_NEAR: 0.1,                                      // relations' gradient capped below this distance (x avg size)
   GD_B1: 0.9, GD_B2: 0.999,                          // Adam: decay of the gradient's running mean and mean square
-  GD_SHAKE: 0.3,                                     // starts beyond the four kinds: shaken by this (x avg size)
+  GD_SHAKE: 0.3,                                     // starts whose kind is taken: shaken by this (x avg size)
   START_SEED_A: 7919, START_SEED_B: 104729,          // per-start random seeds: seed * A + start * B
   // Scoring
   W_OVERLAP: 40,                                     // overlap penalty (only matters inside the optimizer's search)
@@ -265,10 +268,11 @@ function workArea(monitor, margin) {
     cx: monitor.x + monitor.w / 2, cy: monitor.y + monitor.h / 2, diag: Math.hypot(monitor.w, monitor.h),
   };
 }
-// First guess of the gap in layout units (the final scale is not known yet).
-function estPad(items, S, A) {
+// First guess of the gap in layout units (the final scale is not known yet), for
+// thumbnails expected to cover `density` of the work area.
+function estPad(items, S, A, density = INTERNAL.DENSITY_GUESS) {
   const sum = items.reduce((s, i) => s + i.lw * i.lh, 0);
-  const est = Math.min(1, Math.sqrt(A.w * A.h * INTERNAL.DENSITY_GUESS / sum));
+  const est = Math.min(1, Math.sqrt(A.w * A.h * density / sum));
   return S.gap / est;
 }
 
@@ -550,9 +554,13 @@ function layoutRows(ws, S, A) {
 // overlaps and then separates. Several starts race; at checkpoints the worse
 // half is dropped.
 function layoutOptimizer(ws, S, A, info, shared) {
-  const items = prep(ws, S), n = items.length, pad = estPad(items, S, A);
-  const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad, h: it.lh + pad }));
+  // R0: real positions, padded as push apart pads them (the starting layouts are built
+  // with these boxes, so the push-apart start is exactly the push-apart algorithm's).
+  // The search itself pads less: it packs tighter, so its scale and gap come out larger.
+  const items = prep(ws, S), n = items.length, padStart = estPad(items, S, A);
+  const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + padStart, h: it.lh + padStart }));
   if (n < 2) return finalize(items, R0, A, S);
+  const pad = estPad(items, S, A, INTERNAL.DENSITY_SEARCH);
 
   // Starting points. "none" = real (overlapping) positions; "push" = push-apart with the
   // push-apart algorithm's settings (S.pushStart); "rows" / "grid" = those layouts' centers
@@ -587,10 +595,10 @@ function layoutOptimizer(ws, S, A, info, shared) {
   const KINDS = INTERNAL.START_KINDS;
   const kindOf = c => S.startFrom === "mixed" ? KINDS[c % KINDS.length] : (S.startFrom || "push");
 
-  const W = Float64Array.from(R0, r => r.w), H = Float64Array.from(R0, r => r.h);
+  const W = Float64Array.from(items, it => it.lw + pad), H = Float64Array.from(items, it => it.lh + pad);
   const OX = Float64Array.from(items, it => it.cx), OY = Float64Array.from(items, it => it.cy);
-  const sumA = R0.reduce((s, r) => s + r.w * r.h, 0);
-  const avg = R0.reduce((s, r) => s + Math.sqrt(r.w * r.h), 0) / n;
+  let sumA = 0, avg = 0;
+  for (let i = 0; i < n; i++) { sumA += W[i] * H[i]; avg += Math.sqrt(W[i] * H[i]) / n; }
   const rel = makeRelations(OX, OY, items.map(it => it.ow), items.map(it => it.oh), items.map(it => it.lw), items.map(it => it.lh), S, A.diag);
   const relOn = rel.relOn, relPen = rel.pen, pairs = rel.pairs;
   const relRows = rel.rows, RW = rel.RW, RUX = rel.RUX, RUY = rel.RUY;
@@ -649,9 +657,11 @@ function layoutOptimizer(ws, S, A, info, shared) {
     place.refY = mdY === 0 ? mY : mdY === 1 ? y1 + pad / 2 : y2 - pad / 2;
   };
 
-  // The search score: the same as scoreLayout(), computed in layout units,
-  // with the overlap term (which only the search has). Picks the winner among
-  // the starts that finish.
+  // The search score: scoreLayout() computed in layout units (exact while no
+  // thumbnail is held at the max scale; with some held, the room to move toward
+  // the real windows is a little underestimated), plus an overlap term between
+  // the padded boxes, so it also counts gaps that are too small. Picks the winner
+  // among the starts that finish when weak starts aren't dropped.
   const searchScore = (X, Y) => {
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     for (let i = 0; i < n; i++) {
@@ -678,9 +688,11 @@ function layoutOptimizer(ws, S, A, info, shared) {
   };
 
   // The smoothed search score and its gradient (into gX, gY), with overlap
-  // weight mu. Differences from the search score: the box's sides are soft
-  // maxima (log-sum-exp over GD_SMOOTH x the average size), and so is the
-  // choice between its width and height.
+  // weight mu (ramped up during the descent). Differences from the search score:
+  // for the scale, the box's sides are soft maxima (log-sum-exp over GD_SMOOTH x
+  // the average size), and so is the choice between its width and height; the
+  // size term's corner at the max scale is rounded (GD_SMOOTH_CAP). The placement
+  // toward the real windows uses the hard box.
   const gX = new Float64Array(n), gY = new Float64Array(n);
   const e1 = new Float64Array(n), e2 = new Float64Array(n);
   const e3 = new Float64Array(n), e4 = new Float64Array(n);
@@ -868,7 +880,7 @@ function layoutOptimizer(ws, S, A, info, shared) {
     }
   }
 
-  const R = R0.map((r, i) => ({ x: win.X[i], y: win.Y[i], w: r.w, h: r.h }));
+  const R = items.map((it, i) => ({ x: win.X[i], y: win.Y[i], w: W[i], h: H[i] }));
   resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_CLEANUP)); // no overlap may remain
   enforceGap(items, R, A, S);
   info.starts = K; info.winningStart = win.c + 1; info.winningKind = win.kind;
@@ -1167,6 +1179,36 @@ function fillGaps(T, S, A) {
 /* --------------------------------------------------------------------------
    9. PUBLIC API
    -------------------------------------------------------------------------- */
+// Allowed values of the settings (numbers: [lowest, highest], with the lowest
+// excluded where it is marked true). compute() refuses others: they would give
+// unusable layouts or NaN.
+const LIMITS = {
+  margin: [0, Infinity], gap: [0, Infinity], fidelity: [0, 1],
+  maxScale: [0, Infinity, true], maxGrowth: [1, Infinity],
+  wSize: [0, Infinity], wSizes: [0, Infinity], wPlace: [0, Infinity],
+  wRelations: [0, Infinity], neighborFocus: [0, 1],
+  relationsMethod: ["order", "direction"],
+  steps: [1, Infinity], starts: [1, Infinity], checkpoint: [0, 1, true],
+  firstStep: [0, Infinity, true], seed: [-Infinity, Infinity],
+  startFrom: ["push", "rows", "grid", "none", "mixed"],
+  passes: [0, Infinity], strength: [0, Infinity, true], matchShape: [0, Infinity],
+  rows: [0, Infinity],
+};
+function checkSettings(S, where) {
+  for (const k of Object.keys(S)) {
+    const lim = LIMITS[k], v = S[k];
+    if (!lim) continue;
+    const ok =
+      typeof lim[0] === "string"
+      ? lim.indexOf(v) >= 0
+      : Number.isFinite(v) && v >= lim[0] && v <= lim[1] && !(lim[2] && v === lim[0]);
+    if (!ok) {
+      const shown = typeof v === "string" ? JSON.stringify(v) : String(v);
+      throw new Error("unusable setting: " + where + k + " = " + shown);
+    }
+  }
+}
+
 function settings(algorithm, overrides) {
   if (!ALGORITHMS[algorithm]) throw new Error("Unknown spread algorithm: " + algorithm);
   const S = { ...DEFAULTS.common, ...DEFAULTS.scoring, ...DEFAULTS[algorithm] };
@@ -1190,6 +1232,9 @@ function compute(windows, monitor, algorithm, S) {
   if (!algo) throw new Error("Unknown spread algorithm: " + algorithm);
   S = S || settings(algorithm);
   if (algorithm === "optimizer" && (!S.pushStart || !S.rowsStart)) S = settings(algorithm, S); // fill in start settings
+  checkSettings(S, "");
+  if (S.pushStart) checkSettings(S.pushStart, "pushStart.");
+  if (S.rowsStart) checkSettings(S.rowsStart, "rowsStart.");
   const ws = windows.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h }));
   const A = workArea(monitor, S.margin), info = {};
   // Input nothing can be laid out from (and that could make the algorithms misbehave)

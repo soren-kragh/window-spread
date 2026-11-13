@@ -1,13 +1,17 @@
 // Builds the folder for publishing this extension on Cinnamon Spices:
 //
-//   node tools/build-spices.js [--screenshot FILE] [--out DIR]
+//   node tools/build-spices.js [--screenshot FILE] [--out DIR] [--allow-uncommitted]
 //
 // Creates <out>/<UUID>/ (default out: dist/spices) in the structure Spices requires:
 //   <UUID>/info.json        from tools/spices/info.json (the author's GitHub username)
 //   <UUID>/README.md        from tools/spices/README.md (written for Spices users)
 //   <UUID>/screenshot.png   from docs/screenshot.png (or --screenshot)
-//   <UUID>/files/<UUID>/    the extension folder, exactly as in extension/
+//   <UUID>/files/<UUID>/    the extension folder (in a git clone: the files git tracks)
 // and checks it against Spices' rules (the same checks as Spices' validate-spice script).
+// In a git clone it refuses to build while the extension folder has changes that aren't
+// committed, or files git doesn't track (also ignored ones), unless --allow-uncommitted (for
+// tests); even then only tracked files are copied. Outside a clone (e.g. an unpacked ZIP),
+// every file in the extension folder is copied.
 // To publish: copy <out>/<UUID> into your fork of linuxmint/cinnamon-spices-extensions,
 // run ./validate-spice <UUID> there, and open a pull request.
 "use strict";
@@ -18,13 +22,7 @@ function fail(msg) { console.error("build-spices: " + msg); process.exit(1); }
 // Remove a folder and its contents (fs.rmSync needs Node 14.14; Mint 21.3 has Node 12).
 function removeDir(p) { if (fs.existsSync(p)) (fs.rmSync || fs.rmdirSync).call(fs, p, { recursive: true, force: true }); }
 function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : null; }
-function copyDir(src, dst) {
-  fs.mkdirSync(dst, { recursive: true });
-  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, e.name), d = path.join(dst, e.name);
-    if (e.isDirectory()) copyDir(s, d); else fs.copyFileSync(s, d);
-  }
-}
+function git(args) { return spawnSync("git", args, { cwd: ROOT, encoding: "utf8" }); }
 // Width and height of a PNG file, from its header (no image library needed).
 function pngSize(file) {
   const b = fs.readFileSync(file);
@@ -48,11 +46,32 @@ if (!pngSize(screenshot)) fail(`${screenshot} is not a PNG file`);
 const out = path.resolve(arg("--out") || path.join(ROOT, "dist", "spices"));
 const target = path.join(out, UUID);
 
-// Files git doesn't track (editor backups, experiments) would ship too: refuse.
-const untracked = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "--", extDir],
-  { cwd: ROOT, encoding: "utf8" });
-if (untracked.status === 0 && untracked.stdout.trim())
-  fail("files in the extension folder that git doesn't track (remove or commit them):\n" + untracked.stdout.trim());
+// In a clone of the repository, only what is committed may ship: no uncommitted edits, no
+// stray files (editor backups, experiments, ignored files). Elsewhere (e.g. an unpacked
+// ZIP of a commit) git can't tell, so the whole folder is used.
+const top = git(["rev-parse", "--show-toplevel"]);
+const inClone = !top.error && top.status === 0 && fs.realpathSync(top.stdout.trim()) === fs.realpathSync(ROOT);
+let files; // paths relative to ROOT
+if (inClone) {
+  const tracked = git(["ls-files", "-z", "--", extDir]);
+  if (tracked.status !== 0) fail("git ls-files failed: " + tracked.stderr.trim());
+  files = tracked.stdout.split("\0").filter(Boolean);
+  const dirty = git(["status", "--porcelain", "--ignored", "--untracked-files=all", "--", extDir]);
+  if (dirty.status !== 0) fail("git status failed: " + dirty.stderr.trim());
+  if (dirty.stdout.trim() && process.argv.indexOf("--allow-uncommitted") < 0)
+    fail("the extension folder has changes that aren't committed (commit or remove them):\n" + dirty.stdout.trimEnd());
+} else {
+  const walk = dir => {
+    let found = [];
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      found = found.concat(e.isDirectory() ? walk(p) : [path.relative(ROOT, p)]);
+    }
+    return found;
+  };
+  files = walk(extDir);
+  console.log("Not in a git clone of the repository: using every file in the extension folder.");
+}
 
 // --- build
 removeDir(target);
@@ -60,7 +79,11 @@ fs.mkdirSync(target, { recursive: true });
 fs.copyFileSync(path.join(__dirname, "spices", "info.json"), path.join(target, "info.json"));
 fs.copyFileSync(path.join(__dirname, "spices", "README.md"), path.join(target, "README.md"));
 fs.copyFileSync(screenshot, path.join(target, "screenshot.png"));
-copyDir(extDir, path.join(target, "files", UUID));
+for (const f of files) {
+  const d = path.join(target, "files", UUID, path.relative(extDir, path.join(ROOT, f)));
+  fs.mkdirSync(path.dirname(d), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, f), d);
+}
 
 // --- check against Spices' rules (as in their validate-spice script)
 const problems = [];
