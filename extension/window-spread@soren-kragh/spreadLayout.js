@@ -94,7 +94,7 @@ const DEFAULTS = {
     margin: 16,        // px of empty border kept inside the monitor area
     spacing: 8,        // px minimum gap between thumbnails
     fidelity: 0.8,       // relative sizes: 1 = exact, 0 = all thumbnails same area, 0.5 = area ratios square-rooted
-    maxScale: 1,       // largest thumbnail scale; 1 = never bigger than the real window
+    maxScale: 0.9,     // largest thumbnail scale; 1 = never bigger than the real window
     centered: false,   // true: always center the arrangement; false: move it toward the real windows
     fill: false,       // afterwards, grow thumbnails into free space (makes sizes uneven)
     growLimit: 1.5,    // fill: maximum growth factor per thumbnail
@@ -414,12 +414,22 @@ function makeScorer(T, ws, S, A) {
   const OX = O.map(w => w.x + w.w / 2), OY = O.map(w => w.y + w.h / 2);
   const Wt = T.map(t => t.w), Ht = T.map(t => t.h);
   const sumA = T.reduce((q, t) => q + t.w * t.h, 0) || 1;
-  // size: mean -ln(scale), after removing the intended size-fidelity factor
+  // Log scale of each thumbnail, after removing the intended size-fidelity
+  // factor. A thumbnail held at maxScale counts as large as the largest one
+  // that isn't (as maxScale if all are): the limit, not the layout, keeps it
+  // from its intended size, so it costs neither size nor evenness.
+  const lr = O.map((w, i) => Math.log(Wt[i] / w.w / f[i]));
+  const capped = O.map((w, i) => Wt[i] / w.w >= S.maxScale * (1 - 1e-9));
+  let top = -Infinity;
+  for (let i = 0; i < n; i++) if (!capped[i]) top = Math.max(top, lr[i]);
+  if (top === -Infinity) top = Math.log(S.maxScale);
+  for (let i = 0; i < n; i++) if (capped[i]) lr[i] = Math.max(lr[i], top);
+  // size: mean -ln(scale)
   let size = 0;
-  for (let i = 0; i < n; i++) size -= Math.log(Math.min(Wt[i] / O[i].w / f[i], S.maxScale));
+  for (let i = 0; i < n; i++) size -= Math.min(lr[i], Math.log(S.maxScale));
   size /= Math.max(1, n);
   // size distortion: mean absolute deviation of the log scale; 0 when all share one scale
-  const lr = O.map((w, i) => Math.log(Wt[i] / w.w / f[i])), lmean = lr.reduce((a, b) => a + b, 0) / Math.max(1, n);
+  const lmean = lr.reduce((a, b) => a + b, 0) / Math.max(1, n);
   const distortion = lr.reduce((a, v) => a + Math.abs(v - lmean), 0) / Math.max(1, n);
   const rel = makeRelations(OX, OY, O.map(w => w.w), O.map(w => w.h), Wt, Ht, S, A.diag);
   const dist = (X, Y, i) => { const dx = X[i] - OX[i], dy = Y[i] - OY[i]; return Math.sqrt(dx * dx + dy * dy); };

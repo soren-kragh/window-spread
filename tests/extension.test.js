@@ -252,8 +252,8 @@ async function runChecks() {
   ok('minimized windows are reported for every workspace', logs.some(l => l[1].indexOf('minimized window "win13": frame 1900,100 560x850') >= 0));
   ok('decorations are reported once per session', logs.filter(l => l[1].indexOf('decorations around thumbnails') >= 0).length === 1);
   // Engine settings not offered in the settings window (e.g. Keep sizes) must still be defined:
-  // a missing weight would make the score "not a number". A light desktop with small windows
-  // makes thumbnails reach real size, so the size-distortion term is actually in play.
+  // a missing weight would make the score "not a number" (every weight enters the score,
+  // even when its term is 0).
   logs.length = 0;
   P._computeAllWindowSlots.call(monitor([{ seq: 71, x: 300, y: 200, w: 420, h: 300 }, { seq: 72, x: 1500, y: 700, w: 360, h: 260 }, { seq: 73, x: 900, y: 400, w: 1200, h: 800 }], 14), 3);
   const scoreLine = logs.filter(l => /workspace index 14 .*score/.test(l[1]))[0];

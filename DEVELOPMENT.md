@@ -295,21 +295,30 @@ The equal grid used to beat the optimizer on some desktops (2 found where it won
 on all 6 seeds) purely through the size term: it enlarged small windows more
 than big ones (size spread 1.7 to 2.0), which raised the average scale. Since
 uneven scaling was one of the original complaints, the score now charges for it
-("Keep sizes"). After the change: 0 such desktops. Uniform-scale algorithms are
-charged only when thumbnails are capped at the max scale (some reach it and
-stop, others don't), which with size fidelity below 1 happens to small windows
-first. The optimizer's search ignores capping; only its safeguard's final
-comparison sees it.
+("Keep sizes"). After the change: 0 such desktops.
+
+Uniform-scale algorithms are never charged. With few windows, thumbnails reach
+the max scale and stop growing; with size fidelity below 1, small windows get
+there first, so their sizes no longer follow size fidelity. The score used to
+charge that, in both the size and the distortion terms, which rewarded
+shrinking the larger windows below the limit so that the ratios matched again:
+smaller thumbnails, scored as better. A window that could be shown at the max
+scale isn't a fault, so a thumbnail held at the max scale now counts as large
+as the largest one that isn't (as the max scale if all are). The optimizer's
+search, which never saw capping, now scores uniform layouts exactly as the
+score does. Measured on 300 desktops of 2 to 8 windows (typical and small
+sizes, 2560×1440), the equal grid still beats the optimizer on none, at max
+scale 1 and 0.9; the optimizer's layout changed on 45 (34 at max scale 0.9),
+always to bigger thumbnails in total, and never with fewer windows at the max
+scale.
+
+The max scale defaults to 0.9: at 1, a single window, or a few that already
+fit, look exactly as on the desktop, so opening the view seems to do nothing.
 
 Keep sizes is **not offered in the extension's settings** (it stays at the
-engine default): measured with the extension's settings on a 2560×1440 screen,
-it changed the layout on 8 of 280 desktops with typical application window sizes
-(only with 2-3 windows; never from 4 windows up). On random desktops full of
-small windows it changed 13-16 of 25 desktops with 3-6 windows, but real
-desktops rarely look like that. A user testing it on the target system saw no
-effect at all. Teaching the optimizer's search about capping was considered and
-dropped for the same reason. In the lab, the slider stays: it keeps comparisons
-with the equal grid fair.
+engine default): it only charges the equal grid and gap filling, which don't
+search by the score, so it never changes a layout there. In the lab, the slider
+stays: it keeps comparisons with the equal grid fair.
 
 ### 5.5 Exact gaps, no outer half-gap
 push-apart and the optimizer used to guess the gap before knowing the final
