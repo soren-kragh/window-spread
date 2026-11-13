@@ -50,7 +50,9 @@
          algorithm and the engine settings. The order of `windows` never matters, so changes
          in stacking or focus keep using the cached layout.
      SpreadLayout.score(targets, windows, monitor, settings)
-         Score any layout (lower is better), with the same parts as above.
+         Score any layout (lower is better), with the same parts as above. With `centered`,
+         compute() scores its layout before the final centering, so scoring its targets
+         here can give a different (worse) movement part.
      SpreadLayout.random(seed)
          The engine's deterministic random generator (returns a function giving [0, 1)).
          Exposed for generating reproducible test data.
@@ -713,6 +715,19 @@ function placeNearReal(T, ws, A) {
   return T.map(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
 }
 
+// Move the finished arrangement as a whole so it is centered in the work area:
+// equal margins left and right, and top and bottom. Sizes and shape are
+// unchanged.
+function centerLayout(T, A) {
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const t of T) {
+    x1 = Math.min(x1, t.x); y1 = Math.min(y1, t.y);
+    x2 = Math.max(x2, t.x + t.w); y2 = Math.max(y2, t.y + t.h);
+  }
+  const dx = A.cx - (x1 + x2) / 2, dy = A.cy - (y1 + y2) / 2;
+  return T.map(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
+}
+
 // Greedy polish: small moves in 8 directions with shrinking steps, kept only if
 // they lower the score. A thumbnail only moves into free space: never closer to
 // a neighbor than the gap (or than it already was), never outside the work
@@ -978,7 +993,7 @@ function settings(algorithm, overrides) {
 }
 
 // The full pipeline: algorithm, placement toward the real windows, polish, optimizer
-// safeguard, gap filling, score.
+// safeguard, gap filling, score, centering (when asked for).
 // info (diagnostics, present when relevant):
 //   natural:  iterations, hitLimit
 //   anneal:   starts, winningStart (1-based), winningKind, startsPerRound, acceptRate,
@@ -1008,9 +1023,12 @@ function compute(windows, monitor, algorithm, S) {
   }
   if (algorithm === "anneal") T = optimizerSafeguard(T, ws, S, A, info, shared);
   if (algo.uniformScale && S.fill) T = fillGaps(T, S, A);
+  // Scored before centering: the user asked for that move, so it costs nothing.
+  const sc = scoreLayout(T, ws, S, A);
+  if (algo.uniformScale && S.centered) T = centerLayout(T, A);
   return {
     targets: T.map(t => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h, scale: t.w / t.ow })),
-    score: scoreLayout(T, ws, S, A),
+    score: sc,
     info,
   };
 }

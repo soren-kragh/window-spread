@@ -96,6 +96,12 @@ Public API: `DEFAULTS`, `ALGORITHMS`, `settings(algorithm, overrides)`,
    provably can't win (5.18).
 5. **Fill gaps** (optional): thumbnails grow into free space.
 6. **Score.**
+7. **Center** (if `centered`): the arrangement is moved as a whole to the
+   middle of the work area. It comes last because the polish, the safeguard's
+   polished candidates and the gap filling all move thumbnails toward the real
+   windows or unevenly, which would undo an earlier centering. It comes after
+   the score because the user asked for this move, so it shouldn't count as a
+   worse fit.
 
 **Score** (lower is better; the same function drives the optimizer, the polish,
 and all comparisons): `wScale × size + wSizes × distortion + wDisp × movement +

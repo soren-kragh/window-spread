@@ -124,6 +124,37 @@ async function run() {
     ok('a monitor elsewhere (e.g. a second monitor) gives the same layout, shifted', dev < 1e-6, 'max deviation ' + dev.toExponential(1) + ' px');
   }
 
+  section('Engine: always center the arrangement');
+  {
+    // windows crowded at the left edge, with and without polish and gap filling
+    const left = n => desk(5, n).map(w => Object.assign({}, w, { x: w.x / 4 }));
+    const mon = { x: 100, y: 50, w: 1920, h: 1080 };
+    let worst = 0, cases = 0;
+    for (const alg of ['anneal', 'natural', 'rows']) for (const n of [1, 2, 5]) {
+      for (const ov of [{}, { polish: false }, { fill: true }]) {
+        const S = quick(alg, Object.assign({ centered: true }, ov));
+        const T = SL.compute(left(n), mon, alg, S).targets;
+        const x1 = Math.min.apply(null, T.map(t => t.x));
+        const y1 = Math.min.apply(null, T.map(t => t.y));
+        const x2 = Math.max.apply(null, T.map(t => t.x + t.w));
+        const y2 = Math.max.apply(null, T.map(t => t.y + t.h));
+        worst = Math.max(
+          worst,
+          Math.abs((x1 + x2) / 2 - (mon.x + mon.w / 2)),
+          Math.abs((y1 + y2) / 2 - (mon.y + mon.h / 2))
+        );
+        cases++;
+      }
+    }
+    ok(
+      'push-apart, rows and the optimizer: the finished arrangement is centered ' +
+        '(also after polish and gap filling)',
+      worst < 1e-6,
+      cases + ' layouts of windows at the left edge, worst off-center ' +
+        worst.toExponential(1) + ' px'
+    );
+  }
+
   section('Engine: settings at the edges of their ranges, small and odd monitors');
   {
     // Monitors as the extension passes them (after decorations), one of them not at 0,0;

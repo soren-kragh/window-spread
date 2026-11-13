@@ -442,7 +442,7 @@ const COMMON_UI = [
   { k: "duration", label: "Animation", min: 0, max: 1200, step: 50, unit: " ms",
     info: "How long thumbnails take to fly into place. Set it to 0 to see layout changes instantly while dragging sliders. This is a lab setting only; it doesn't affect the layout." },
   { k: "centered", label: "Always center", type: "check", uniformOnly: true,
-    info: "When on, the finished arrangement is always placed in the middle of the screen. When off (recommended), it is moved as a whole toward where the real windows are, as far as the screen allows. Centering has a side effect in the optimizer: moving a window at the edge of the arrangement shifts every other window when it re-centers, so a window can get stuck far from home just to hold the others in place." },
+    info: "When on, the finished arrangement is always placed in the middle of the screen. When off (recommended), it is moved as a whole toward where the real windows are, as far as the screen allows. Centering has a side effect in the optimizer: moving a window at the edge of the arrangement shifts every other window when it re-centers, so a window can get stuck far from home just to hold the others in place. The final centering move itself isn't counted in the score (it's what you asked for), but the measurement Mean movement includes it." },
   { k: "fill", label: "Fill gaps", type: "check", uniformOnly: true,
     info: "After the layout is done, each thumbnail grows (smallest first) as far as it can without touching another thumbnail or the screen margin. This uses empty space better but makes relative sizes less faithful." }
 ];
