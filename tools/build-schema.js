@@ -45,9 +45,9 @@ const schema={
   'fill':sw('common','fill','Fill gaps afterwards','Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.',{dependency:'algorithm!=grid'}),
   'max-growth':scale('common','maxGrowth','Fill gaps: maximum growth',1,3,0.1,'The most a thumbnail may grow while filling gaps.',{dependency:'fill'}),
 
-  'w-size':scale('scoring','wSize','Thumbnail size',0,5,0.1,'How much bigger thumbnails count.'),
-  'w-place':scale('scoring','wPlace','Stay in place',0,5,0.1,'Penalty for thumbnails far from where their real window is.'),
-  'w-relations':scale('scoring','wRelations','Keep relations',0,5,0.1,'Penalty for windows changing how they sit relative to each other.'),
+  'w-size':scale('scoring','wSize','Thumbnail size',0,5,0.1,'Reward for bigger thumbnails.'),
+  'w-place':scale('scoring','wPlace','Stay in place',0,5,0.1,'Reward for thumbnails staying near their real window.'),
+  'w-relations':scale('scoring','wRelations','Keep relations',0,5,0.1,'Reward for windows keeping how they sit relative to each other.'),
   'relations-method':combo('scoring','relationsMethod','Relations method',{'Order (left/right, above/below)':'order','Direction (angles)':'direction'},'Order only cares whether windows swap sides; Direction compares the angles between windows and is stricter.'),
   'neighbor-focus':scale('scoring','neighborFocus','Neighbor focus',0,1,0.05,'How much more nearby windows matter than distant ones.',{dependency:'relations-method=direction'}),
 

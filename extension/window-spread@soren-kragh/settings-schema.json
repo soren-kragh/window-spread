@@ -227,7 +227,7 @@
     "max": 5,
     "step": 0.1,
     "description": "Thumbnail size",
-    "tooltip": "How much bigger thumbnails count."
+    "tooltip": "Reward for bigger thumbnails."
   },
   "w-place": {
     "type": "scale",
@@ -236,7 +236,7 @@
     "max": 5,
     "step": 0.1,
     "description": "Stay in place",
-    "tooltip": "Penalty for thumbnails far from where their real window is."
+    "tooltip": "Reward for thumbnails staying near their real window."
   },
   "w-relations": {
     "type": "scale",
@@ -245,7 +245,7 @@
     "max": 5,
     "step": 0.1,
     "description": "Keep relations",
-    "tooltip": "Penalty for windows changing how they sit relative to each other."
+    "tooltip": "Reward for windows keeping how they sit relative to each other."
   },
   "relations-method": {
     "type": "combobox",

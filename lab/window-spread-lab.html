@@ -414,7 +414,7 @@ const ALGO_UI = { // order here = order in the menu
 
 const SCORING_UI = [
   { k: "wSize", label: "Thumbnail size", min: 0, max: 5, step: 0.1,
-    info: "How much bigger thumbnails count. Since thumbnails share one scale, this is the same as rewarding an arrangement that fills the screen well. Its balance against the other weights decides how much shrinking you accept in exchange for windows staying in place." },
+    info: "Reward for bigger thumbnails. Since thumbnails share one scale, this is the same as rewarding an arrangement that fills the screen well. Its balance against the other weights decides how much shrinking you accept in exchange for windows staying in place." },
   { k: "wSizes", label: "Keep sizes", min: 0, max: 5, step: 0.1,
     info: "How much it counts against a layout when thumbnails are scaled unevenly, so their sizes no longer match the real windows' relative sizes (as set by size fidelity). The equal grid and gap filling are charged. Layouts that use one scale for everything (push-apart, ordered rows, the optimizer) are not: a thumbnail held at the max scale counts as if it had its intended size, since the limit, not the layout, stops it. Without this, a layout could look good on thumbnail size just by enlarging small windows more than big ones. Not offered in the Cinnamon extension, where it never changes a layout (the layouts there that it charges don't search by the score); there it stays at its default." },
   { k: "wPlace", label: "Stay in place", min: 0, max: 5, step: 0.1,
