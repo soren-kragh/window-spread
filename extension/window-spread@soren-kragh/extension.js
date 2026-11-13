@@ -78,7 +78,8 @@ const EXPO_ICON_SCALE = 0.25;       // app icon scale factor in overviewModeOn (
 // The engine's DEFAULTS are the reference for default values; settings-schema.json is
 // generated from them. Engine settings not listed here keep their DEFAULTS value, e.g.
 // scoring.wSizes ("Keep sizes": it never changes a layout in the extension) and push.passes
-// (only a safety limit: push apart stops when nothing overlaps, long before it).
+// (only a safety limit: push apart stops when nothing overlaps, long before it); the
+// polish of the optimizer and push apart is always on (it clearly improves both).
 const SETTINGS_MAP = [
   ["margin", "common", "margin"], ["gap", "common", "gap"], ["fidelity", "common", "fidelity"],
   ["max-scale", "common", "maxScale"], ["centered", "common", "centered"], ["fill", "common", "fill"],
@@ -88,7 +89,6 @@ const SETTINGS_MAP = [
   ["neighbor-focus", "scoring", "neighborFocus"],
   ["optimizer-effort", "optimizer", "steps", 100],
   ["push-strength", "push", "strength"], ["push-match-shape", "push", "matchShape"],
-  ["push-polish", "push", "polish"],
   ["rows-count", "rows", "rows"],
 ];
 // Show all workspaces has its own copies of the layout settings (defaults from the same engine

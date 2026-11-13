@@ -60,7 +60,6 @@ const schema={
 
   'push-strength':scale('push','strength','Push strength',0.05,1,0.05,'How far each push moves an overlapping pair.'),
   'push-match-shape':scale('push','matchShape','Match screen shape',0,1,0.05,'Bias pushes toward the screen\'s shape.'),
-  'push-polish':sw('push','polish','Polish the result','Final small moves into free space that improve the score.'),
 
   'scale-enabled':{type:'switch',default:true,description:'Enable Window Spread',
     tooltip:'When off, Cinnamon arranges Show all windows itself.'},
@@ -101,7 +100,7 @@ const layout={type:'layout',pages:['page-general','page-layout','page-expo','pag
   'sec-layout':{type:'section',title:'Arrangement',dependency:'scale-enabled',keys:['algorithm','margin','gap','fidelity','max-scale','centered','fill','max-growth']},
   'sec-scoring':{type:'section',title:'What makes a good layout',keys:['w-size','w-place','w-relations','relations-method','neighbor-focus']},
   'sec-optimizer':{type:'section',title:'Optimizer',keys:['optimizer-effort']},
-  'sec-push':{type:'section',title:'Push apart (also a starting point for the optimizer)',keys:['push-strength','push-match-shape','push-polish']},
+  'sec-push':{type:'section',title:'Push apart (also a starting point for the optimizer)',keys:['push-strength','push-match-shape']},
   'sec-rows':{type:'section',title:'Ordered rows (also a starting point for the optimizer)',keys:['rows-count']},
   'sec-expo-enable':{type:'section',title:'Show all workspaces (Expo)',keys:['expo-enabled']},
   'sec-expo':{type:'section',title:'Arrangement',dependency:'expo-enabled',keys:['expo-algorithm','expo-margin','expo-gap','expo-fidelity','expo-max-scale','expo-centered','expo-fill','expo-max-growth']}};

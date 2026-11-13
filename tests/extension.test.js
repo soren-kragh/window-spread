@@ -211,7 +211,7 @@ async function runChecks() {
     fidelity: d('fidelity'), maxScale: Math.min(1, d('max-scale')), centered: d('centered'), fill: d('fill'), maxGrowth: d('max-growth'),
     wSize: d('w-size'), wPlace: d('w-place'), wRelations: d('w-relations'), relationsMethod: d('relations-method'), neighborFocus: d('neighbor-focus'),
     steps: d('optimizer-effort') * 100,
-    pushStart: { passes: SL.DEFAULTS.push.passes, strength: d('push-strength'), matchShape: d('push-match-shape'), polish: d('push-polish') },
+    pushStart: { passes: SL.DEFAULTS.push.passes, strength: d('push-strength'), matchShape: d('push-match-shape'), polish: SL.DEFAULTS.push.polish },
     rowsStart: { rows: d('rows-count') } });
   const area = { x: CHROME.left, y: CHROME.top, w: 2560 - CHROME.left - CHROME.right, h: 1440 - CHROME.top - CHROME.bottom };
   const want = SL.compute(frames.map(f => ({ id: f.seq, x: f.x, y: f.y, w: f.w, h: f.h })), area, 'optimizer', S).targets;

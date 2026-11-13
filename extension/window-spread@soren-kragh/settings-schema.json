@@ -100,8 +100,7 @@
       "title": "Push apart (also a starting point for the optimizer)",
       "keys": [
         "push-strength",
-        "push-match-shape",
-        "push-polish"
+        "push-match-shape"
       ]
     },
     "sec-rows": {
@@ -294,12 +293,6 @@
     "step": 0.05,
     "description": "Match screen shape",
     "tooltip": "Bias pushes toward the screen's shape."
-  },
-  "push-polish": {
-    "type": "switch",
-    "default": true,
-    "description": "Polish the result",
-    "tooltip": "Final small moves into free space that improve the score."
   },
   "scale-enabled": {
     "type": "switch",

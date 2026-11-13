@@ -619,7 +619,9 @@ window too: push apart stops as soon as nothing overlaps, and on the same 294
 desktops it used at most 226 passes (30 windows; median 15 at 3 windows, 136 at
 30) and never reached the limit. Raising it changes nothing; lowering it below
 what a desktop needs only leaves overlaps for the cruder final cleanup. It
-stays in the engine as a safety limit, and in the lab.
+stays in the engine as a safety limit, and in the lab. Push apart's polish is
+always on as well (it lowers push apart's score by 3-9%, 5.18, and push apart
+is also the optimizer's safeguard candidate); the lab keeps the switch.
 
 
 ## 6. Verified facts about Cinnamon 6.0.5
