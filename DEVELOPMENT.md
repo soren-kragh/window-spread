@@ -248,7 +248,7 @@ Gradient descent (Adam) moves all windows at once, on a copy of the score whose
 corners are smoothed. The overlap weight grows from 3 to 300, so the
 arrangement first contracts through overlaps and then separates (as in
 analytical chip placement); the step size shrinks from `firstStep` (0.3 of the
-average window size) to 0.0002.
+average window size) to 0.0005.
 
 Rejected: simulated annealing, which moves one window at a time. In a tight
 arrangement, shrinking needs many windows to move together, so it ends far from
@@ -281,8 +281,21 @@ up, and much more code).
 * **Padding during the search:** the gap must be set in layout units before the
   final scale is known, from a guess of the screen coverage (`DENSITY_GUESS`,
   50%, for push apart and the starting layouts). Gradient descent packs to about
-  75%, so the search pads for 75% (`DENSITY_SEARCH`; mean gap to best 0.86%
-  instead of 1.11%). The push-apart start therefore stays exactly push apart.
+  75%, so the search pads for 70% coverage (`DENSITY_SEARCH`; 75% instead of
+  50% cut the mean gap to best from 1.11% to 0.86%, 70% is better still). The
+  starting layouts keep push apart's padding, so the push-apart start stays
+  exactly push apart.
+* **Tuning:** the constants were searched one at a time and in combination
+  (324 sets), then checked on three new sets of 294 desktops, against the
+  spread from merely nudging today's values (noise). The overlap weight's
+  schedule (3 to 300), the first step size (0.3), the checkpoint and Adam's
+  constants are at their best; overlap start 1 or 10 gives 4-5× more desktops
+  over 5%. Smoothing 0.02 (was 0.05), last step 0.0005 (was 0.0002) and
+  padding 70% (was 75%) together: desktops over 2% 185 → 155, over 5% 28 → 21,
+  mean gap 1.13% → 1.00% (noise: 182-193, 29-37, 1.09-1.16%); better at
+  effort 5 and 30 too, the same with the order method, mixed for Show all
+  workspaces-like settings (over 5%: 15 vs 10, noise 9-12). The worst desktops
+  (13-23% off) need another start, not other constants.
 * **Cost:** a step moves every window and checks every pair (n² work).
 * **Settings:** only the effort is in the settings window (5.9). Starts,
   checkpoint, first step, start kind, seed and polish are fixed; the lab keeps

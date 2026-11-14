@@ -158,7 +158,7 @@ const INTERNAL = {
   CLEANUP: { passes: 2000, strength: 0.5 },         // final overlap removal
   // Gap handling: the gap must be chosen in unscaled units before the final scale is known.
   DENSITY_GUESS: 0.5,                                // expected share of the screen covered, for the first gap guess
-  DENSITY_SEARCH: 0.75,                              // the same for the optimizer's search, which packs tighter
+  DENSITY_SEARCH: 0.7,                               // the same for the optimizer's search, which packs tighter
   GAP_ROUNDS: 100,                                   // max rounds of widening the gap until it is right
   GAP_OVERSHOOT: 1.003,                              // widen slightly more than needed, to converge quickly
   // Seeds used only to break exact ties (windows with identical centers)
@@ -166,9 +166,9 @@ const INTERNAL = {
   // Optimizer
   START_KINDS: ["push", "rows", "grid", "none"],     // rotation used by startFrom "mixed"
   // Descent
-  GD_STEP_END: 0.0002,                               // last step size (x avg window size); the first is S.firstStep
+  GD_STEP_END: 0.0005,                               // last step size (x avg window size); the first is S.firstStep
   GD_MU_START: 3, GD_MU_END: 300,                    // overlap weight during the descent (W_OVERLAP: the search score's)
-  GD_SMOOTH: 0.05, GD_SMOOTH_WH: 0.02,               // softness of the box's sides (x avg size) and of width vs height
+  GD_SMOOTH: 0.02, GD_SMOOTH_WH: 0.02,               // softness of the box's sides (x avg size) and of width vs height
   GD_SMOOTH_CAP: 0.02,                               // softness of the size term's corner at the max scale (ln scale)
   GD_NEAR: 0.1,                                      // relations' gradient capped below this distance (x avg size)
   GD_B1: 0.9, GD_B2: 0.999,                          // Adam: decay of the gradient's running mean and mean square
