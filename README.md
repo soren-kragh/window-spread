@@ -1,12 +1,10 @@
 # Window Spread
 
 A Cinnamon extension that arranges **Show all windows** (Scale), and the windows
-inside each workspace in **Show all workspaces** (Expo), according to where your
-windows really are and how big they are. Cinnamon's own arrangement is a grid
-filled in stacking order, so windows jump around depending on which one you used
-last; with Window Spread they don't. Everything else stays Cinnamon's own: how
-you open the views, the animations, titles, close buttons, and clicking a
-window.
+inside each workspace in **Show all workspaces** (Expo), by where your windows
+really are and how big they are. Cinnamon's own arrangement is a grid filled in
+stacking order, so windows jump around depending on which one you used last;
+with Window Spread they don't. Everything else stays Cinnamon's own.
 
 ![Show all windows with Window Spread](docs/screenshot.png)
 
@@ -15,9 +13,7 @@ Works with Cinnamon 6.0 to 6.8 (Linux Mint 21.3 and later).
 
 ## Install
 
-You only need one folder from this repository:
-`extension/window-spread@soren-kragh`. Copy it into Cinnamon's extensions
-folder, then switch it on.
+You only need the folder `extension/window-spread@soren-kragh`.
 
 **1. Get the files**, either with git:
 
@@ -26,9 +22,7 @@ git clone https://github.com/soren-kragh/window-spread.git
 cd window-spread
 ```
 
-or without git: on the repository page, click **Code → Download ZIP**, then
-unpack it and go into the unpacked folder (GitHub names it
-`window-spread-main`):
+or as a ZIP (**Code → Download ZIP** on the repository page):
 
 ```
 cd ~/Downloads
@@ -36,116 +30,85 @@ unzip window-spread-main.zip
 cd window-spread-main
 ```
 
-**2. Copy the extension folder** into Cinnamon's extensions folder:
+**2. Copy the extension folder** into Cinnamon's extensions folder (keep its
+name; Cinnamon requires it):
 
 ```
 mkdir -p ~/.local/share/cinnamon/extensions
 cp -r extension/window-spread@soren-kragh ~/.local/share/cinnamon/extensions/
 ```
 
-Keep the folder name exactly as it is; Cinnamon requires it to match the
-extension's identifier.
-
 **3. Switch it on:** open **System Settings → Extensions** (or run
 `cinnamon-settings extensions`), select **Window Spread**, and click the **+**
 button at the bottom of the list. If it isn't listed yet, restart Cinnamon
 (press Alt+F2, type `r`, press Enter) and look again.
 
-**4. Try it:** open Show all windows the way you normally do (hot corner or
-keyboard shortcut). The windows now appear near where they actually are on your
-desktop.
+**4. Try it:** open Show all windows as you normally do (hot corner or
+keyboard shortcut).
 
-**Updating** to a newer version: get the files again (`git pull` in the cloned
-folder, or download a fresh ZIP), then, in that folder, replace the installed
-copy:
+**Updating:** get the files again (`git pull`, or a fresh ZIP), then, in that
+folder, replace the installed copy and restart Cinnamon (Alt+F2, `r`):
 
 ```
 rm -rf ~/.local/share/cinnamon/extensions/window-spread@soren-kragh
 cp -r extension/window-spread@soren-kragh ~/.local/share/cinnamon/extensions/
 ```
 
-Removing the old copy first makes sure no files from the previous version are
-left behind. Your settings are kept, since Cinnamon stores them elsewhere. Then
-restart Cinnamon (Alt+F2, `r`).
-
-**Removing** it: see "Switching it off or removing it" below. Nothing on your
-system is changed outside the extension folder and its saved settings, so
-removing those fully restores Cinnamon's own behavior.
+Your settings are kept. (On Cinnamon 6.0-6.6, a setting left at either end of
+its range returns to its default when an update changes the settings.)
 
 
 ## Settings
 
 In **System Settings → Extensions**, select Window Spread and click its
-**configure** button. Hover over a setting to see what it does. Changes take
-effect the next time you open a view.
-
-Each view has its own tab with an **Enable Window Spread** switch. With both
-switched off, Cinnamon behaves exactly as without the extension.
-
-To set everything back to the defaults, choose **Reset to defaults** in the
-settings window's menu (top right).
+**configure** button. Hover over a setting to see what it does; changes apply
+the next time you open a view. Each view has its own tab with an **Enable
+Window Spread** switch; with both off, Cinnamon behaves exactly as without the
+extension. **Reset to defaults** is in the settings window's menu (top right).
 
 
 ## Switching it off or removing it
 
-* **Off:** in System Settings → Extensions, select Window Spread and remove it
-  from the enabled extensions with the **−** button. Show all windows
-  immediately goes back to Cinnamon's original arrangement; no restart is
-  needed.
+* **Off:** in System Settings → Extensions, select Window Spread and click the
+  **−** button. Cinnamon's own arrangement returns at once.
 * **Remove completely:** switch it off, then delete
-  `~/.local/share/cinnamon/extensions/window-spread@soren-kragh` and its saved
-  settings in `~/.config/cinnamon/spices/window-spread@soren-kragh`.
+  `~/.local/share/cinnamon/extensions/window-spread@soren-kragh` and its
+  settings in `~/.config/cinnamon/spices/window-spread@soren-kragh`. Nothing
+  else on your system is changed.
 
 
 ## Troubleshooting
 
-If the views don't look as expected, the extension's diagnostics show what it
-does. If anything goes wrong in a layout, the extension falls back to
-Cinnamon's own arrangement for that time, so the views keep working, and writes
-the error to the log. Cinnamon's Looking Glass tool shows the log messages:
+If anything goes wrong in a layout, the extension falls back to Cinnamon's own
+arrangement for that time and logs the error (also in `~/.xsession-errors`;
+each distinct error once, until the extension is switched off and on or
+Cinnamon restarts). To see what it does:
 
 1. In the extension's settings, switch on **Write diagnostics to the log**.
-2. Open Show all windows once, preferably with at least one window minimized.
+2. Open Show all windows once, preferably with a window minimized.
 3. Press Alt+F2, type `lg`, press Enter, and open the **Log** tab. Messages from
    this extension start with `[window-spread]`.
 
-You should see:
+For Show all windows you'll see, per monitor and workspace each time the view
+opens: the number of windows, the algorithm, whether the layout was computed
+or reused, the time and the score; the frame of each minimized window (it
+should be its normal position and size; if it's 0×0 or far off screen, please
+report it); and once the size of the decorations around thumbnails. Show all
+workspaces logs a line marked `expo,` each time it arranges a workspace (on
+hover, for example). Switch the diagnostics off again afterwards.
 
-* For each workspace each time the view opens (Cinnamon lays out all workspaces
-  at once, so you can switch workspaces inside the view): the number of windows
-  and how many are minimized, the algorithm, whether the layout was computed or
-  reused from the cache, the time it took, and the score. Monitors and
-  workspaces are identified by Cinnamon's internal indexes, which count from 0,
-  plus the workspace's name as shown on screen, for example `monitor index 0,
-  workspace index 1 ("Workspace 2")`.
-* Below that, **the frame of each minimized window**. A minimized window should
-  report its normal position and size, as when it is open. If it reports
-  something like 0×0 or a position far off screen, minimized windows would be
-  placed oddly; please report it, with what the log shows.
-* Once per session: **the size of the decorations around thumbnails** (title and
-  close button).
-* For Show all workspaces: lines starting with `expo,`, one per monitor and
-  workspace each time windows are arranged there (hovering a workspace, for
-  example).
-
-Errors are logged whether or not diagnostics are on, also in
-`~/.xsession-errors`; the same error is logged only once until Cinnamon
-restarts. Switch the diagnostics off again afterwards; they aren't needed for
-normal use.
-
-The extension's home is https://github.com/soren-kragh/window-spread.
+Report problems at https://github.com/soren-kragh/window-spread.
 
 
 ## What's in this repository
 
-You don't need any of this to use the extension; it's for trying out layouts and
-for development.
+Only the extension folder is needed to use it; the rest is for development.
 
 ```
 window-spread/
 ├── README.md               this file
 ├── DEVELOPMENT.md          how it works, why, what's verified, open items
-├── LICENSE                 MIT-0
+├── LICENSE                 MIT
 ├── extension/
 │   └── window-spread@soren-kragh/   THE EXTENSION (the folder you install)
 │       ├── metadata.json            name, identifier, Cinnamon versions
@@ -164,56 +127,35 @@ window-spread/
 └── tests/                           automated checks: node tests/run-all.js
 ```
 
-Tested against the source code of the latest release of every Cinnamon series
-from 6.0 to 6.8, and in daily use on Linux Mint 21.3 (Cinnamon 6.0.5). After a
-Cinnamon upgrade, see "Checking a new Cinnamon version" in `DEVELOPMENT.md`. To
-change or extend the extension, start with `DEVELOPMENT.md`.
+Tested against the source of every Cinnamon series from 6.0 to 6.8, on Linux
+Mint 21.3 (Cinnamon 6.0.5), and on a fresh install of Linux Mint 22.3 (Cinnamon
+6.6.9). To change the extension, start with `DEVELOPMENT.md`.
 
 
 ## The lab
 
 Open `lab/window-spread-lab.html` in a web browser to experiment with layouts,
-compare algorithms and tune settings. The (i) buttons explain everything on the
-page.
+compare algorithms and tune settings; the (i) buttons explain everything. It
+loads the extension's own engine file, so it computes exactly what the
+extension does, and it only works from inside this folder.
 
-The lab doesn't contain its own copy of the layout engine: it loads
-`extension/window-spread@soren-kragh/spreadLayout.js`, the same file the
-extension uses. What you see in the lab is therefore exactly what the extension
-computes. This also means the lab only works when opened from inside this
-folder, with the folder structure intact; if it can't find the engine, it says
-so.
-
-The lab's simulated desktop is 1920×1080. On a real desktop, the gap between
-thumbnails is larger than the lab shows (on the author's system 32 px side by
-side and 54 px one above the other, instead of 4), because Cinnamon draws a
-title below each thumbnail and a close button at a corner, and the extension
-leaves room for them.
+On a real desktop the gaps between thumbnails are larger than in the lab
+(on the author's system 32 px side by side and 54 px one above the other,
+instead of 4): the extension leaves room for Cinnamon's titles and close
+buttons.
 
 
-## Changing the extension yourself
+## Changing it yourself
 
-After changing any file in `extension/window-spread@soren-kragh`, replace the
-installed copy with the two commands under "Updating" in Install, then restart
-Cinnamon (Alt+F2, `r`) so it loads the new version.
-
-
-## Changing the defaults
-
-The layout defaults are defined in one place: `DEFAULTS` near the top of
-`extension/window-spread@soren-kragh/spreadLayout.js` (section 1). The lab reads
-them from there. A few settings exist only in the settings window: the algorithm
-of each view and the margin and gap of Show all workspaces; their defaults are
-in `tools/build-schema.js`. Cinnamon's settings window needs its own copy of all
-defaults in `settings-schema.json`, which is generated: after changing a
-default, run `node tools/build-schema.js` (needs Node.js; on Mint: `sudo apt
-install nodejs`). `node tests/run-all.js` reports it if the two disagree.
-
-Cinnamon keeps the values you've set in the settings window, even when defaults
-change. After updating the extension with new defaults, choose **Reset to
-defaults** in the settings window's menu (top right) to apply them.
+After changing the extension folder, install it as under "Updating". The layout
+defaults are in `DEFAULTS` near the top of `spreadLayout.js`; the few settings
+that exist only in the settings window have theirs in `tools/build-schema.js`.
+After changing a default, run `node tools/build-schema.js` (Mint: `sudo apt
+install nodejs`) to regenerate `settings-schema.json`, and choose **Reset to
+defaults** in the settings window: Cinnamon keeps values already set. More in
+`DEVELOPMENT.md`.
 
 
 ## License
 
-MIT No Attribution (MIT-0); see `LICENSE`. The extension folder carries its own
-copy.
+MIT; see `LICENSE`. The extension folder carries its own copy.

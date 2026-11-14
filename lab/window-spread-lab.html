@@ -355,7 +355,7 @@ let algo = "optimizer"; // algorithm selected when the page opens
    How each knob appears in the panel. Default values come from
    SpreadLayout.DEFAULTS (or LAB_DEFAULTS for lab-only items), never from here.
    Fields: k (setting key), label, min/max/step (sliders), type "check"/"select",
-   options, unit, kfmt (show thousands as "k"), zero (label for 0), showIf (only
+   options, unit, per (shown divided by this), zero (label for 0), showIf (only
    shown when true), uniformOnly (hidden for the equal grid), info (help text).
    -------------------------------------------------------------------------- */
 const START_NAMES = { push: "push apart", rows: "ordered rows", grid: "equal grid", none: "real positions" };
@@ -379,8 +379,8 @@ const ALGO_UI = { // order here = order in the menu
     name: "Optimizer",
     desc: "Searches by gradient descent for the arrangement with the best score, as defined in the Scoring section. Several starts race each other and the weakest are dropped along the way. Never scores worse than push apart or ordered rows with their current settings, whatever it starts from, as long as gap filling is off.",
     params: [
-      { k: "steps", label: "Effort", min: 100, max: 20000, step: 100, kfmt: true,
-        info: "How many descent steps the search takes in total, shared among all parallel starts. In each step every window moves a little in the direction that lowers the score; early on, overlaps are only mildly penalized, so the arrangement can contract and rearrange before it is pushed apart. More steps give better layouts but take longer (see Time)." },
+      { k: "steps", label: "Effort", min: 100, max: 20000, step: 100, per: 100,
+        info: "How many descent steps the search takes in total, in hundreds (10 = 1000 steps), as in the extension's Effort setting (which goes up to 100); shared among all parallel starts. In each step every window moves a little in the direction that lowers the score; early on, overlaps are only mildly penalized, so the arrangement can contract and rearrange before it is pushed apart. More steps give better layouts but take longer (see Time)." },
       { k: "starts", label: "Parallel starts", min: 1, max: 16, step: 1,
         info: "How many independent searches run side by side. A single search can settle into a poor arrangement; with several, the best one wins. Beyond one per starting point, starts are shaken randomly so they differ. The total effort stays the same, so more starts means fewer steps each unless weak starts are dropped early." },
       { k: "checkpoint", label: "First checkpoint", min: 0.05, max: 0.95, step: 0.05,
@@ -401,7 +401,7 @@ const ALGO_UI = { // order here = order in the menu
     name: "Ordered rows",
     desc: "Packs windows into rows: top to bottom by vertical position, left to right within each row. Picks the row count that gives the largest uniform scale.",
     params: [
-      { k: "rows", label: "Rows", min: 0, max: 8, step: 1, zero: "auto",
+      { k: "rows", label: "Number of rows", min: 0, max: 8, step: 1, zero: "auto",
         info: "How many rows to pack windows into. At 0 (auto), every possible count is tried and the one giving the biggest thumbnails wins." }
     ]
   },
@@ -416,11 +416,11 @@ const SCORING_UI = [
   { k: "wSize", label: "Thumbnail size", min: 0, max: 5, step: 0.1,
     info: "Reward for bigger thumbnails. Since thumbnails share one scale, this is the same as rewarding an arrangement that fills the screen well. Its balance against the other weights decides how much shrinking you accept in exchange for windows staying in place." },
   { k: "wSizes", label: "Keep sizes", min: 0, max: 5, step: 0.1,
-    info: "How much it counts against a layout when thumbnails are scaled unevenly, so their sizes no longer match the real windows' relative sizes (as set by size fidelity). The equal grid and gap filling are charged. Layouts that use one scale for everything (push-apart, ordered rows, the optimizer) are not: a thumbnail held at the max scale counts as if it had its intended size, since the limit, not the layout, stops it. Without this, a layout could look good on thumbnail size just by enlarging small windows more than big ones. Not offered in the Cinnamon extension, where it never changes a layout (the layouts there that it charges don't search by the score); there it stays at its default." },
+    info: "Reward for thumbnails keeping the real windows' relative sizes (as set by size fidelity): a layout is charged when thumbnails are scaled unevenly. The equal grid and gap filling are charged. Layouts that use one scale for everything (push-apart, ordered rows, the optimizer) are not: a thumbnail held at the max scale counts as if it had its intended size, since the limit, not the layout, stops it. Without this, a layout could look good on thumbnail size just by enlarging small windows more than big ones. Not offered in the Cinnamon extension, where it never changes a layout (the layouts there that it charges don't search by the score); there it stays at its default." },
   { k: "wPlace", label: "Stay in place", min: 0, max: 5, step: 0.1,
-    info: "How much it counts against a layout when thumbnails land far from where the real windows are on screen. This is absolute position: the average distance from each window's real center to its thumbnail's center." },
+    info: "Reward for thumbnails staying near where the real windows are on screen. This is absolute position: a layout is charged by the average distance from each window's real center to its thumbnail's center." },
   { k: "wRelations", label: "Keep relations", min: 0, max: 5, step: 0.1,
-    info: "How much it counts against a layout when windows change how they sit relative to each other, regardless of where on screen the arrangement ends up or how much it is scaled. Set the other weights low and this high to keep the shape of your desktop while letting it move. The method below chooses how this is measured." },
+    info: "Reward for windows keeping how they sit relative to each other, regardless of where on screen the arrangement ends up or how much it is scaled. Set the other weights low and this high to keep the shape of your desktop while letting it move. The method below chooses how this is measured." },
   { k: "relationsMethod", label: "Method", type: "select",
     options: [["order", "Order (left/right, above/below)"], ["direction", "Direction (angles)"]],
     info: "Order only checks whether one window stays left of, right of, above or below another; windows can shift freely as long as they don't swap sides. Each relation counts by how clearly it holds: two windows far apart at almost the same height are side by side, so their above/below order barely counts, and pairs that were only barely separated count less. Direction compares the exact angle from each window to every other window before and after, so a window up and to the right at 45° should stay at roughly 45°. Direction is stricter and keeps the overall shape more faithfully." },
@@ -429,16 +429,16 @@ const SCORING_UI = [
 ];
 
 const COMMON_UI = [
-  { k: "margin", label: "Margin", min: 0, max: 200, step: 4, unit: " px",
+  { k: "margin", label: "Margin", min: 0, max: 200, step: 2, unit: " px",
     info: "Empty border kept around the edge of the screen in the spread. Thumbnails are laid out inside what remains." },
-  { k: "gap", label: "Gap", min: 0, max: 80, step: 2, unit: " px",
+  { k: "gap", label: "Gap", min: 0, max: 200, step: 2, unit: " px",
     info: "Minimum empty space between thumbnails, in screen pixels. All layouts keep at least this gap unless it leaves no room for the windows, and none adds extra space around the outer edge beyond the margin." },
   { k: "fidelity", label: "Size fidelity", min: 0, max: 1, step: 0.05, uniformOnly: true,
     info: "How strictly thumbnails keep their real sizes relative to each other. At 1, a window twice as wide as another stays twice as wide. At 0, every thumbnail gets the same area, so small windows are easier to read but the size cue is gone. At 0.5, area differences are reduced to their square root: a window with 4× the area appears with 2× the area." },
-  { k: "maxScale", label: "Max scale", min: 0.2, max: 1.5, step: 0.05,
-    info: "Upper limit on any thumbnail's scale. At 1, a thumbnail is never shown bigger than the real window. Above 1, windows on an uncrowded desktop may be enlarged. A window that hits the limit shrinks within its slot, which slightly breaks size fidelity; the score doesn't count that against the layout." },
+  { k: "maxScale", label: "Largest scale", min: 0.2, max: 1.5, step: 0.05,
+    info: "Upper limit on any thumbnail's scale (\"Largest thumbnail scale\" in the extension). At 1, a thumbnail is never shown bigger than the real window. Above 1, windows on an uncrowded desktop may be enlarged; the extension stops at 1, since Cinnamon never shows a thumbnail bigger than its window. A window that hits the limit shrinks within its slot, which slightly breaks size fidelity; the score doesn't count that against the layout." },
   { k: "maxGrowth", label: "Max growth", min: 1, max: 3, step: 0.1, uniformOnly: true, showIf: s => s.fill,
-    info: "The most a single thumbnail may grow while filling gaps, as a multiple of its size from the layout. It is also limited by the max scale." },
+    info: "The most a single thumbnail may grow while filling gaps, as a multiple of its size from the layout. It is also limited by the largest scale." },
   { k: "duration", label: "Animation", min: 0, max: 1200, step: 50, unit: " ms",
     info: "How long thumbnails take to fly into place. Set it to 0 to see layout changes instantly while dragging sliders. This is a lab setting only; it doesn't affect the layout." },
   { k: "centered", label: "Always center", type: "check", uniformOnly: true,
@@ -483,7 +483,7 @@ const INFO = {
    -------------------------------------------------------------------------- */
 function fmt(p, v) {
   if (p.type === "check") return "";
-  if (p.kfmt && v >= 1000) return (v / 1000) + "k";
+  if (p.per) return String(v / p.per);
   if (p.zero && Number(v) === 0) return p.zero;
   const decimals = p.step < 1 ? (p.step < 0.01 ? 3 : 2) : 0;
   return Number(v).toFixed(decimals) + (p.unit || "");

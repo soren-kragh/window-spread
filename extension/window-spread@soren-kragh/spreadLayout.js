@@ -81,7 +81,7 @@
    Not done here (left to the caller)
      - Animation, drawing, input handling, multi-monitor assignment.
      - A time budget: effort is a fixed number of descent steps (`optimizer.steps`), set
-       by the user; see DEVELOPMENT.md 5.19.
+       by the user; see DEVELOPMENT.md 5.9.
    ========================================================================== */
 // All engine code lives inside this factory function, so that it can also be handed to
 // Web Workers as text (createSpreadLayout.toString()) without keeping a second copy.
