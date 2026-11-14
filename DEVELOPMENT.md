@@ -143,11 +143,14 @@ covers this case). Details:
 
 * **Decorations:** the close button overhangs above and at the sides, the title
   sits below (`WindowOverlay.chromeHeights/chromeWidths`). The engine gets the
-  monitor shrunk by the decorations, and the gap = the user's gap + max(top +
-  bottom, left + right).
+  monitor shrunk by the decorations, the user's gap, and the decorations as
+  extra gaps: `extraGapX` = left + right between thumbnails side by side,
+  `extraGapY` = top + bottom one above the other (section 5.22).
 * **Title width:** Cinnamon limits every title to one shared width
-  (`_slotWidth`); the extension sets it to the smallest thumbnail width plus the
-  gap, so no title can reach a neighbor.
+  (`_slotWidth`), centered under each thumbnail; the extension sets it to the
+  smallest thumbnail width plus the gap side by side, so no title can reach a
+  neighbor, but adds at most twice the room at the screen's edges (margin +
+  decorations), so with a gap over twice the margin no title reaches past them.
 * **Margin:** Cinnamon's own 1% margin is replaced by the extension's margin
   setting.
 * **Max scale:** Cinnamon caps thumbnails at scale 1, so the setting's maximum
@@ -200,10 +203,11 @@ whose completion callbacks are what make windows and icons visible again.
   screen, as in Cinnamon. Cinnamon anchors the badge to the window *actor's*
   corner (`ICON_OFFSET` = −5 screen px beyond it); the extension anchors it to
   the *visible frame's* corner at the same offset, and reserves the overhang (5
-  / boxScale full-size px) in the margin (left, top) and the gap, like the Scale
-  view's decorations (5.16). The constants (100 ms, −5, 0.25) are module-level
-  in Cinnamon and not exported, so they're repeated in `extension.js`; a test
-  compares them with each Cinnamon version's source.
+  / boxScale full-size px) in the margin (left, top) and the gap (the same in
+  both directions), like the Scale view's decorations (5.16). The constants
+  (100 ms, −5, 0.25) are module-level in Cinnamon and not exported, so they're
+  repeated in `extension.js`; a test compares them with each Cinnamon version's
+  source.
 * Version differences, detected at runtime: 6.0-6.6 keep the clone actor in
   `window.actor` and the thumbnail scale in `box.scale`; 6.8 makes the clone the
   actor and renames the scale `box.thumbnail_scale`. The arrangement logic is
@@ -244,13 +248,17 @@ cleanup, gap enforcement and safeguard run the same at any effort).
 * Deterministic: same input and settings, same output.
 * No overlaps; everything inside the monitor minus `margin` (to 0.5 px); scale
   at most `maxScale`; finite positions and sizes above 0.
-* Gaps at least `gap`, unless the gap is too large for the screen and the
-  number of windows (tested up to an effective gap of 58 px, the default gap
-  plus decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
+* Gaps at least `gap`, plus `extraGapX` side by side or `extraGapY` one above
+  the other, unless the gaps are too large for the screen and the number of
+  windows (tested up to an effective gap of 58 px, the default gap plus
+  decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
   1366×768 screen) push apart's overlap removal stops short and gaps can be
   smaller; the equal grid shrinks its gaps when they would leave no room for
   the cells; ordered rows with a fixed row count that doesn't fit uses the best
-  row count instead.
+  row count instead. Widening the padding until the real gap is right (5.5) may
+  take up to 100 rounds (`GAP_ROUNDS`); with 8, crowded desktops (20-30 windows,
+  e.g. on a 1052×1870 portrait monitor) ended up to 0.7% short of the gap. The
+  extra rounds only run where needed and cost no measurable time.
 * Push apart, ordered rows and the optimizer use one shared scale (exact
   relative sizes at fidelity 1).
 * The optimizer never scores worse than push apart or ordered rows given the
@@ -649,6 +657,51 @@ the best: 1.11% → 0.86% with the default gap (better on 180 desktops, worse on
 51), 1.41% → 0.79% with 58 px (the default gap plus decorations; 170 better,
 53 worse); the same time; push apart, ordered rows and equal grid unchanged.
 
+### 5.22 Separate gaps side by side and one above the other
+The Scale view's decorations need 28 px between thumbnails side by side (the
+close buttons' overhang) but 50 px one above the other (close button and
+title). With one gap the extension had to pass the larger, so thumbnails side
+by side were 22 px further apart than needed (seen with margin and gap at 0).
+The engine now takes `extraGapX` and `extraGapY` on top of `gap`: the padding,
+gap enforcement, scale, ordered rows, equal grid, polish and gap filling use
+each in its own direction. They default to 0, and are not user settings; Expo
+needs the same room in both directions and leaves them at 0.
+
+Polish: separations are measured between thumbnails widened (or heightened)
+by the difference between the gaps and held to the smaller gap, which is the
+same as each gap in its own direction. A pair already closer than that (gaps
+too large for the screen) also may not get closer in its real separation;
+without that rule, a review found the polish could make such a pair overlap
+(up to 0.6 px, only with extra gaps of 180 px and more on crowded screens).
+
+Baseline first: with both at 0, every algorithm gives the same layouts as
+before (294 random desktops as in 5.20, regenerated: 1920×1053 and 2560×1440,
+3-30 windows; 7 setting variants, the optimizer's only at its defaults from
+21 windows; 7728 layouts, the largest difference 1e-12, from rounding). With
+the decorations above and the default gap and margin, compared with the old
+single gap of 58 px, per desktop:
+
+| Algorithm  | Score better / worse | Worst  | Mean thumbnail scale        |
+|------------|----------------------|--------|-----------------------------|
+| Optimizer  | 271 / 23             | +0.25  | +1.8% (-11% to +13%)        |
+| Push apart | 223 / 70             | +0.80  | +1.1% (-22% to +33%)        |
+| Rows       | 276 / 18             | +0.43  | +1.7% (never smaller)       |
+| Grid       | 245 / 49             | +0.06  | +1.5% (never smaller)       |
+
+* Optimizer and push apart: noise between local minima. Narrowing the old
+  single gap by just 2 px gives the same pattern (optimizer worse on 47,
+  push apart on 60, worst +0.84), and the optimizer is worse by more than 0.1
+  on 1 desktop, against 12 for that 2 px change.
+* Ordered rows picks the row count by the largest scale, not by the score; 10
+  of its 18 picked another row count (thumbnails never smaller).
+* Optimizer against the best layout found on each desktop by any of four runs
+  (old and new, each at default and at 10× effort with 8 starts; the old
+  layouts are valid for the new gaps): mean distance 0.029 (new) vs 0.115
+  (old), over 0.1 on 34 vs 134 desktops; with gap and margin 0: 0.026 vs 0.109,
+  33 vs 138.
+* Window titles are now limited to the smallest thumbnail width + 36 px instead
+  of + 58 (still no title reaches a neighbor's title or thumbnail).
+
 
 ## 6. Verified facts about Cinnamon 6.0.5
 
@@ -736,10 +789,10 @@ Tested against the source of the latest release of each series (as of November
 
 Via the diagnostics log:
 
-* Decorations: top 14, bottom 36, left 14, right 14 px (effective gap 66 px with
-  the gap setting at 16 px; 58 px with the current default of 8 px). Because the
-  decorations are added to margin and gap automatically, the Show all windows
-  defaults are small (16 / 8).
+* Decorations: top 14, bottom 36, left 14, right 14 px. With the default gap of
+  8 px this gives effective gaps of 36 px side by side and 58 px one above the
+  other. Because the decorations are added to margin and gaps automatically,
+  the Show all windows defaults are small (16 / 8).
 * Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
 * First computation, optimizer, Show all windows (Ryzen 9 5900X, 2026-11-13):
   1 window 0.2-0.5 ms, 2-3 windows 2.4-6.3 ms (the highest is the first layout
@@ -834,9 +887,6 @@ The checks on the target system are in README's "Troubleshooting".
 
 ## 8. Open items
 
-* **Separate horizontal and vertical gaps** in the engine. Thumbnails need 50 px
-  of decorations vertically but only 28 px horizontally on the target system;
-  with one gap, side-by-side thumbnails are 22 px further apart than necessary.
 * **Stability between invocations** (keep thumbnails where they were when only
   one window changed): would need the previous layout as an extra starting
   point; not started.

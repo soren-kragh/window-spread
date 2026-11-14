@@ -65,8 +65,9 @@
      - Only window positions and sizes are read. Stacking order and focus history are
        never used: windows are processed in an order derived from geometry alone.
      - Deterministic: the same input and settings always give the same result.
-     - Thumbnails never overlap, keep at least `gap` px between them (unless the gap
-       leaves no room on the monitor; see DEVELOPMENT.md section 4), and stay inside
+     - Thumbnails never overlap, keep at least `gap` px between them, plus
+       `extraGapX` side by side or `extraGapY` one above the other (unless the gaps
+       leave no room on the monitor; see DEVELOPMENT.md section 4), and stay inside
        the monitor area minus `margin`.
      - The optimizer never scores worse than the push-apart and ordered-rows
        layouts, when given the same settings as those algorithms (pushStart /
@@ -95,6 +96,8 @@ const DEFAULTS = {
   common: {
     margin: 16,        // px of empty border kept inside the monitor area
     gap: 8,            // px minimum gap between thumbnails
+    extraGapX: 0,      // px added to the gap between thumbnails side by side, and
+    extraGapY: 0,      // between thumbnails one above the other (for the caller's decorations)
     fidelity: 0.8,       // relative sizes: 1 = exact, 0 = all thumbnails same area, 0.5 = area ratios square-rooted
     maxScale: 0.9,     // largest thumbnail scale; 1 = never bigger than the real window
     centered: false,   // true: always center the arrangement; false: move it toward the real windows
@@ -154,7 +157,7 @@ const INTERNAL = {
   // Gap handling: the gap must be chosen in unscaled units before the final scale is known.
   DENSITY_GUESS: 0.5,                                // expected share of the screen covered, for the first gap guess
   DENSITY_SEARCH: 0.75,                              // the same for the optimizer's search, which packs tighter
-  GAP_ROUNDS: 8,                                     // max rounds of widening the gap until it is right
+  GAP_ROUNDS: 100,                                   // max rounds of widening the gap until it is right
   GAP_OVERSHOOT: 1.003,                              // widen slightly more than needed, to converge quickly
   // Seeds used only to break exact ties (windows with identical centers)
   SEED_TIES: 12345, SEED_CLEANUP: 1, SEED_GAP: 7,
@@ -268,17 +271,24 @@ function workArea(monitor, margin) {
     cx: monitor.x + monitor.w / 2, cy: monitor.y + monitor.h / 2, diag: Math.hypot(monitor.w, monitor.h),
   };
 }
-// First guess of the gap in layout units (the final scale is not known yet), for
-// thumbnails expected to cover `density` of the work area.
+// The gaps in px: x between thumbnails side by side, y one above the other.
+function gaps(S) {
+  return { x: S.gap + (S.extraGapX || 0), y: S.gap + (S.extraGapY || 0) };
+}
+// First guess of the gaps in layout units (the final scale is not known yet), for
+// thumbnails expected to cover `density` of the work area: the padding { x, y }
+// added to the layout sizes.
 function estPad(items, S, A, density = INTERNAL.DENSITY_GUESS) {
   const sum = items.reduce((s, i) => s + i.lw * i.lh, 0);
   const est = Math.min(1, Math.sqrt(A.w * A.h * density / sum));
-  return S.gap / est;
+  const g = gaps(S);
+  return { x: g.x / est, y: g.y / est };
 }
 
 /* --------------------------------------------------------------------------
    5. PUSH-APART PRIMITIVES
-   Layout-space rectangles R: { x, y } = center, { w, h } = layout size + gap ("pad").
+   Layout-space rectangles R: { x, y } = center, { w, h } = layout size + padding
+   { x, y } (the gaps in layout units, "pad").
    -------------------------------------------------------------------------- */
 // Push overlapping pairs apart until nothing overlaps (or maxPasses passes), each push
 // `strength` of the overlap. `matchShape` biases pushes toward the work area's shape.
@@ -311,28 +321,28 @@ function resolve(R, maxPasses, strength, matchShape, A, rng) {
   }
   return it;
 }
-// If the real final scale is larger than first guessed, the on-screen gap would be too
-// small: widen the padding to what the real scale needs and push apart again.
-function enforceGap(items, R, A, S) {
+// If the real final scale is larger than first guessed, the on-screen gaps would be too
+// small: widen the padding (pad, updated) to what the real scale needs and push apart
+// again.
+function enforceGap(items, R, pad, A, S) {
   // Overlaps left when the push-apart hit its pass limit (none otherwise: then this
   // returns at once)
   resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_GAP));
-  let pad = R.length ? R[0].w - items[0].lw : 0;
+  const g = gaps(S);
   for (let k = 0; k < INTERNAL.GAP_ROUNDS; k++) {
-    const b = bounds(R), s = Math.min(A.w / (b.x2 - b.x1 - pad), A.h / (b.y2 - b.y1 - pad));
-    const need = S.gap / s;
-    if (need <= pad * 1.0001 + 1e-9) break;
-    pad = need * INTERNAL.GAP_OVERSHOOT;
-    items.forEach((it, i) => { R[i].w = it.lw + pad; R[i].h = it.lh + pad; });
+    const b = bounds(R), s = Math.min(A.w / (b.x2 - b.x1 - pad.x), A.h / (b.y2 - b.y1 - pad.y));
+    const needX = g.x / s, needY = g.y / s;
+    if (needX <= pad.x * 1.0001 + 1e-9 && needY <= pad.y * 1.0001 + 1e-9) break;
+    pad.x = needX * INTERNAL.GAP_OVERSHOOT; pad.y = needY * INTERNAL.GAP_OVERSHOOT;
+    items.forEach((it, i) => { R[i].w = it.lw + pad.x; R[i].h = it.lh + pad.y; });
     resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_GAP));
   }
 }
 // Scale the arrangement uniformly so the windows (not their padding) fill the work area,
 // centered. Returns thumbnail rectangles.
-function finalize(items, R, A, S) {
-  const pad = R.length ? R[0].w - items[0].lw : 0;
+function finalize(items, R, pad, A, S) {
   const b = bounds(R);
-  const s = Math.min(A.w / (b.x2 - b.x1 - pad), A.h / (b.y2 - b.y1 - pad));
+  const s = Math.min(A.w / (b.x2 - b.x1 - pad.x), A.h / (b.y2 - b.y1 - pad.y));
   const bcx = (b.x1 + b.x2) / 2, bcy = (b.y1 + b.y2) / 2;
   return items.map((it, i) => {
     const sc = Math.min(s * it.f, S.maxScale);
@@ -470,11 +480,11 @@ function scoreLayout(T, ws, S, A) {
 // method), so the arrangement follows where windows are, never the stacking order.
 function layoutGrid(ws, S, A) {
   const items = prep(ws, { ...S, fidelity: 1 });
-  const n = items.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), g = S.gap;
-  // Gaps between cells; where the gap setting leaves no room for the cells, the gaps
+  const n = items.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), g = gaps(S);
+  // Gaps between cells; where the gap settings leave no room for the cells, the gaps
   // shrink to take half the width (or height).
-  const gx = A.w - g * (cols - 1) > 0 ? g : A.w / 2 / (cols - 1);
-  const gy = A.h - g * (rows - 1) > 0 ? g : A.h / 2 / (rows - 1);
+  const gx = A.w - g.x * (cols - 1) > 0 ? g.x : A.w / 2 / (cols - 1);
+  const gy = A.h - g.y * (rows - 1) > 0 ? g.y : A.h / 2 / (rows - 1);
   const cw = (A.w - gx * (cols - 1)) / cols, ch = (A.h - gy * (rows - 1)) / rows;
   // cell centers, row by row; the last row is centered if it isn't full
   const cells = [];
@@ -494,17 +504,17 @@ function layoutGrid(ws, S, A) {
 // scale the whole arrangement uniformly to fit.
 function layoutPush(ws, S, A, info) {
   const items = prep(ws, S), pad = estPad(items, S, A);
-  const R = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad, h: it.lh + pad }));
+  const R = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + pad.x, h: it.lh + pad.y }));
   const it = resolve(R, S.passes, S.strength, S.matchShape, A, random(INTERNAL.SEED_TIES));
   info.passes = it; info.hitLimit = it >= S.passes;
-  enforceGap(items, R, A, S);
-  return finalize(items, R, A, S);
+  enforceGap(items, R, pad, A, S);
+  return finalize(items, R, pad, A, S);
 }
 
 // Ordered rows: rows top to bottom by vertical position, left to right within a row;
 // the row count giving the largest uniform scale wins (or S.rows if set).
 function layoutRows(ws, S, A) {
-  const items = prep(ws, S), n = items.length, g = S.gap;
+  const items = prep(ws, S), n = items.length, g = gaps(S), gx = g.x, gy = g.y;
   const byY = items.slice().sort((a, b) => a.cy - b.cy || a.cx - b.cx || a.id - b.id);
   const total = byY.reduce((s, i) => s + i.lw, 0);
   // r rows, filled in reading order; s = the scale at which they fit
@@ -515,10 +525,10 @@ function layoutRows(ws, S, A) {
     const rows = buckets.filter(b => b.length).map(b => b.sort((a, c) => a.cx - c.cx || a.id - c.id));
     let s = Infinity, sumH = 0;
     for (const row of rows) {
-      s = Math.min(s, (A.w - g * (row.length - 1)) / row.reduce((q, i) => q + i.lw, 0));
+      s = Math.min(s, (A.w - gx * (row.length - 1)) / row.reduce((q, i) => q + i.lw, 0));
       sumH += Math.max(...row.map(i => i.lh));
     }
-    s = Math.min(s, (A.h - g * (rows.length - 1)) / sumH);
+    s = Math.min(s, (A.h - gy * (rows.length - 1)) / sumH);
     return { s, rows };
   };
   const fixed = S.rows | 0;
@@ -532,18 +542,18 @@ function layoutRows(ws, S, A) {
   }
   if (!(best.s > 0)) throw new Error("ordered rows: the gaps leave no room for the windows");
   const { s, rows } = best, out = [];
-  const H = rows.reduce((q, row) => q + Math.max(...row.map(i => i.lh)) * s, 0) + g * (rows.length - 1);
+  const H = rows.reduce((q, row) => q + Math.max(...row.map(i => i.lh)) * s, 0) + gy * (rows.length - 1);
   let y = A.cy - H / 2;
   for (const row of rows) {
     const rh = Math.max(...row.map(i => i.lh)) * s;
-    const rw = row.reduce((q, i) => q + i.lw * s, 0) + g * (row.length - 1);
+    const rw = row.reduce((q, i) => q + i.lw * s, 0) + gx * (row.length - 1);
     let x = A.cx - rw / 2;
     for (const it of row) {
       const sc = Math.min(s * it.f, S.maxScale);
       out.push(rectC(it.id, x + it.lw * s / 2, y + rh / 2, it.ow * sc, it.oh * sc, it.ow, it.oh));
-      x += it.lw * s + g;
+      x += it.lw * s + gx;
     }
-    y += rh + g;
+    y += rh + gy;
   }
   return out;
 }
@@ -558,8 +568,8 @@ function layoutOptimizer(ws, S, A, info, shared) {
   // with these boxes, so the push-apart start is exactly the push-apart algorithm's).
   // The search itself pads less: it packs tighter, so its scale and gap come out larger.
   const items = prep(ws, S), n = items.length, padStart = estPad(items, S, A);
-  const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + padStart, h: it.lh + padStart }));
-  if (n < 2) return finalize(items, R0, A, S);
+  const R0 = items.map(it => ({ x: it.cx, y: it.cy, w: it.lw + padStart.x, h: it.lh + padStart.y }));
+  if (n < 2) return finalize(items, R0, padStart, A, S);
   const pad = estPad(items, S, A, INTERNAL.DENSITY_SEARCH);
 
   // Starting points. "none" = real (overlapping) positions; "push" = push-apart with the
@@ -574,7 +584,7 @@ function layoutOptimizer(ws, S, A, info, shared) {
     if (kind === "push") { // = the push-apart algorithm's first step
       const rng = random(INTERNAL.SEED_TIES);
       resolve(R, push.passes, push.strength, push.matchShape, A, rng);
-      shared.push = { items, R: R.map(r => ({ ...r })) };
+      shared.push = { items, R: R.map(r => ({ ...r })), pad: { ...padStart } };
     } else if (kind === "rows" || kind === "grid") {
       let T;
       try {
@@ -595,7 +605,7 @@ function layoutOptimizer(ws, S, A, info, shared) {
   const KINDS = INTERNAL.START_KINDS;
   const kindOf = c => S.startFrom === "mixed" ? KINDS[c % KINDS.length] : (S.startFrom || "push");
 
-  const W = Float64Array.from(items, it => it.lw + pad), H = Float64Array.from(items, it => it.lh + pad);
+  const W = Float64Array.from(items, it => it.lw + pad.x), H = Float64Array.from(items, it => it.lh + pad.y);
   const OX = Float64Array.from(items, it => it.cx), OY = Float64Array.from(items, it => it.cy);
   let sumA = 0, avg = 0;
   for (let i = 0; i < n; i++) { sumA += W[i] * H[i]; avg += Math.sqrt(W[i] * H[i]) / n; }
@@ -628,8 +638,8 @@ function layoutOptimizer(ws, S, A, info, shared) {
   // center of the box (x1, y1, x2, y2), then moved toward the real windows as
   // far as the work area allows (or centered). Thumbnail i lands at
   // px + (X[i] - bcx) * s, which is also base + (X[i] - ref) * s with ref =
-  // mean(X) while the move is free (mode 0), the box's left side + pad / 2
-  // when held at the work area's left (1), its right side - pad / 2 when held
+  // mean(X) while the move is free (mode 0), the box's left side + pad.x / 2
+  // when held at the work area's left (1), its right side - pad.x / 2 when held
   // at the right (2), or its center when centered (3). Same for y.
   const place = {
     px: 0, py: 0, bcx: 0, bcy: 0, modeX: 0, modeY: 0, refX: 0, refY: 0
@@ -646,15 +656,15 @@ function layoutOptimizer(ws, S, A, info, shared) {
     for (let i = 0; i < n; i++) { mX += X[i]; mY += Y[i]; }
     mX /= n; mY /= n;
     const mx = mOX - (mX - bcx) * s, my = mOY - (mY - bcy) * s;
-    const hw = (x2 - x1 - pad) * s / 2, hh = (y2 - y1 - pad) * s / 2;
+    const hw = (x2 - x1 - pad.x) * s / 2, hh = (y2 - y1 - pad.y) * s / 2;
     const lx = A.x + hw, hx = A.x + A.w - hw;
     const ly = A.y + hh, hy = A.y + A.h - hh;
     place.px = clamp(mx, lx, hx); place.py = clamp(my, ly, hy);
     place.modeX = mx < lx ? 1 : mx > hx ? 2 : 0;
     place.modeY = my < ly ? 1 : my > hy ? 2 : 0;
     const mdX = place.modeX, mdY = place.modeY;
-    place.refX = mdX === 0 ? mX : mdX === 1 ? x1 + pad / 2 : x2 - pad / 2;
-    place.refY = mdY === 0 ? mY : mdY === 1 ? y1 + pad / 2 : y2 - pad / 2;
+    place.refX = mdX === 0 ? mX : mdX === 1 ? x1 + pad.x / 2 : x2 - pad.x / 2;
+    place.refY = mdY === 0 ? mY : mdY === 1 ? y1 + pad.y / 2 : y2 - pad.y / 2;
   };
 
   // The search score: scoreLayout() computed in layout units (exact while no
@@ -669,7 +679,7 @@ function layoutOptimizer(ws, S, A, info, shared) {
       if (X[i] - hw < x1) x1 = X[i] - hw; if (X[i] + hw > x2) x2 = X[i] + hw;
       if (Y[i] - hh < y1) y1 = Y[i] - hh; if (Y[i] + hh > y2) y2 = Y[i] + hh;
     }
-    const s = Math.min(A.w / (x2 - x1 - pad), A.h / (y2 - y1 - pad));
+    const s = Math.min(A.w / (x2 - x1 - pad.x), A.h / (y2 - y1 - pad.y));
     placeAt(X, Y, x1, y1, x2, y2, s);
     let d = 0, o = 0, r = 0;
     for (let i = 0; i < n; i++) {
@@ -719,8 +729,8 @@ function layoutOptimizer(ws, S, A, info, shared) {
       s3 += (e3[i] = Math.exp((Y[i] + H[i] / 2 - y2) / tau));
       s4 += (e4[i] = Math.exp((y1 - Y[i] + H[i] / 2) / tau));
     }
-    const bw = x2 - x1 + tau * Math.log(s1 * s2) - pad;
-    const bh = y2 - y1 + tau * Math.log(s3 * s4) - pad;
+    const bw = x2 - x1 + tau * Math.log(s1 * s2) - pad.x;
+    const bh = y2 - y1 + tau * Math.log(s3 * s4) - pad.y;
     const la = Math.log(bw / A.w), lb = Math.log(bh / A.h);
     const lm = Math.max(la, lb);
     const ea = Math.exp((la - lm) / tauWH), eb = Math.exp((lb - lm) / tauWH);
@@ -882,10 +892,10 @@ function layoutOptimizer(ws, S, A, info, shared) {
 
   const R = items.map((it, i) => ({ x: win.X[i], y: win.Y[i], w: W[i], h: H[i] }));
   resolve(R, INTERNAL.CLEANUP.passes, INTERNAL.CLEANUP.strength, 0, A, random(INTERNAL.SEED_CLEANUP)); // no overlap may remain
-  enforceGap(items, R, A, S);
+  enforceGap(items, R, pad, A, S);
   info.starts = K; info.winningStart = win.c + 1; info.winningKind = win.kind;
   info.startsPerRound = counts; info.stepsPerStart = L;
-  return finalize(items, R, A, S);
+  return finalize(items, R, pad, A, S);
 }
 
 const ALGORITHMS = {
@@ -928,8 +938,11 @@ function centerLayout(T, A) {
 
 // Greedy polish: small moves in 8 directions with shrinking steps, kept only if
 // they lower the score. A thumbnail only moves into free space: never closer to
-// a neighbor than the gap (or than it already was), never outside the work
-// area.
+// a neighbor than the gaps (or than it already was), never outside the work
+// area. Where the two gaps differ, separations are measured between thumbnails
+// widened (or heightened) by the difference, and held to the smaller gap; a
+// pair already closer than that (the gaps leave no room) may get no closer in
+// the real separation either, so it can't come to overlap.
 //
 // Only the score terms involving the moving thumbnail change, so a move is
 // judged by local() of that thumbnail before and after. The work is kept small
@@ -940,7 +953,8 @@ function centerLayout(T, A) {
 // * Overlap terms are exactly 0 while nothing overlaps, and skipped then.
 // * A thumbnail whose last scan found nothing is skipped until another moves.
 function polishLayout(T, ws, S, A) {
-  const sc = makeScorer(T, ws, S, A), n = sc.n, g = S.gap;
+  const sc = makeScorer(T, ws, S, A), n = sc.n, G = gaps(S);
+  const g = Math.min(G.x, G.y), ex = G.x - g, ey = G.y - g;
   if (n < 1) return { T, moved: 0, gain: 0 };
   const Wt = Float64Array.from(sc.Wt), Ht = Float64Array.from(sc.Ht);
   const X = Float64Array.from(T, t => t.x + t.w / 2);
@@ -953,13 +967,20 @@ function polishLayout(T, ws, S, A) {
   const avg = sc.Wt.reduce((q, w, i) => q + Math.sqrt(w * Ht[i]), 0) / n;
   const step0 = avg * INTERNAL.POLISH_FIRST_STEP;
   // Separation of thumbnail i at (x, y) from thumbnail j: the larger of the two
-  // axis gaps; negative when they overlap.
+  // axis gaps, less ex and ey; negative when they overlap (or come closer than
+  // ex and ey).
   const sep = (i, j, x, y) => Math.max(
+    Math.abs(x - X[j]) - (Wt[i] + Wt[j]) / 2 - ex,
+    Math.abs(y - Y[j]) - (Ht[i] + Ht[j]) / 2 - ey
+  );
+  // The real separation (without ex and ey); at least sep.
+  const apart = (i, j, x, y) => Math.max(
     Math.abs(x - X[j]) - (Wt[i] + Wt[j]) / 2,
     Math.abs(y - Y[j]) - (Ht[i] + Ht[j]) / 2
   );
-  // Some pair overlaps (only possible if overlap removal hit its limit). While
-  // false, every overlap term is exactly 0.
+  // Some pair may overlap (separation below 0: only if overlap removal hit its
+  // limit or the gaps leave no room). While false, every overlap term is
+  // exactly 0.
   let anyOv = false;
   for (let i = 0; i < n && !anyOv; i++) for (let j = i + 1; j < n; j++) {
     if (sep(i, j, X[i], Y[i]) < 0) { anyOv = true; break; }
@@ -988,12 +1009,14 @@ function polishLayout(T, ws, S, A) {
   };
   // Near list of thumbnail i: the neighbors a move of up to step0 could bring
   // closer than allowed, nearest first, with their current separation (nearS)
-  // and the separation a move must keep (nearT). A neighbor whose separation is
-  // at least gap + step stays farther than the gap after any move of that step,
-  // so it can neither block the move nor overlap.
+  // and the separation a move must keep (nearT; nearR: the real separation, for
+  // pairs closer than 0). A neighbor whose separation is at least g + step stays
+  // farther than g after any move of that step, so it can neither block the
+  // move nor overlap.
   const REACH = 1e-3; // px of safety margin on that reach
   const nearJ = new Int32Array(n);
   const nearS = new Float64Array(n), nearT = new Float64Array(n);
+  const nearR = new Float64Array(n);
   let nearN = 0;
   const findNear = i => {
     nearN = 0;
@@ -1006,8 +1029,10 @@ function polishLayout(T, ws, S, A) {
         nearJ[k] = nearJ[k - 1];
         nearS[k] = nearS[k - 1];
         nearT[k] = nearT[k - 1];
+        nearR[k] = nearR[k - 1];
       }
       nearJ[k] = j; nearS[k] = s; nearT[k] = Math.min(g, s) - 1e-6;
+      nearR[k] = s < 0 ? Math.min(0, apart(i, j, X[i], Y[i])) - 1e-6 : 0;
     }
   };
   const DX = [1, -1, 0, 0, .7071, .7071, -.7071, -.7071];
@@ -1033,6 +1058,7 @@ function polishLayout(T, ws, S, A) {
           for (let k = 0; k < nearN && nearS[k] < lim; k++) {
             const s = sep(i, nearJ[k], nx, ny);
             if (s < nearT[k]) { fits = false; break; }
+            if (s < 0 && apart(i, nearJ[k], nx, ny) < nearR[k]) { fits = false; break; }
             if (s < minSep) minSep = s;
           }
           if (!fits) continue;
@@ -1083,8 +1109,8 @@ function optimizerSafeguard(T, ws, S, A, info, shared) {
       } catch (e) { continue; } // no room for ordered rows: nothing to compare with
     } else if (shared.push) { // the push-apart algorithm's remaining steps
       const p = shared.push;
-      enforceGap(p.items, p.R, A, S);
-      C = finalize(p.items, p.R, A, S);
+      enforceGap(p.items, p.R, p.pad, A, S);
+      C = finalize(p.items, p.R, p.pad, A, S);
     } else {
       const P = S.pushStart;
       C = layoutPush(
@@ -1112,9 +1138,10 @@ function optimizerSafeguard(T, ws, S, A, info, shared) {
 // are at least 0 (up to rounding, far below the caller's 1e-9 margin); and the
 // movement term is at least what pairs of thumbnails that would be too close at
 // their real positions force on them:
-// * The polish never brings two thumbnails closer than min(gap, their
-//   separation in C), less 1e-6 px per move (its tolerance); `slack` covers the
-//   most moves it can make.
+// * The polish never brings two thumbnails closer than min(g, their
+//   separation in C), less 1e-6 px per move (its tolerance), with separations
+//   measured as the polish does (g the smaller gap, the thumbnails widened or
+//   heightened by the difference); `slack` covers the most moves it can make.
 // * For a pair to stay that far apart, the distances of the two from their real
 //   positions must add up to at least m (the shortfall along the axis that is
 //   cheaper to fix).
@@ -1129,11 +1156,13 @@ function polishLowerBound(C, ws, S, A) {
   const minStep = INTERNAL.POLISH_MIN_STEP;
   for (let s = avg * INTERNAL.POLISH_FIRST_STEP; s >= minStep; s /= 2) steps++;
   const slack = 1e-6 * INTERNAL.POLISH_PASSES * n * steps * 8 + 1e-3;
+  // separations as the polish measures them
+  const G = gaps(S), g = Math.min(G.x, G.y), ex = G.x - g, ey = G.y - g;
   const pairs = [];
   for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-    const a = (C[i].w + C[j].w) / 2, b = (C[i].h + C[j].h) / 2;
+    const a = (C[i].w + C[j].w) / 2 + ex, b = (C[i].h + C[j].h) / 2 + ey;
     const s0 = Math.max(Math.abs(X[i] - X[j]) - a, Math.abs(Y[i] - Y[j]) - b);
-    const r = Math.min(S.gap, s0) - slack;
+    const r = Math.min(g, s0) - slack;
     const m = Math.min(
       a + r - Math.abs(OX[i] - OX[j]),
       b + r - Math.abs(OY[i] - OY[j])
@@ -1152,14 +1181,14 @@ function polishLowerBound(C, ws, S, A) {
 
 // Optional: let each thumbnail (smallest first) grow into free space, up to S.maxGrowth.
 function fillGaps(T, S, A) {
-  const g = S.gap;
+  const g = gaps(S), gx = g.x, gy = g.y;
   const order = T.map((_, i) => i).sort((a, b) => T[a].w * T[a].h - T[b].w * T[b].h || T[a].y - T[b].y || T[a].x - T[b].x);
   const hits = (r, i) => {
     if (r.x < A.x - 0.5 || r.y < A.y - 0.5 || r.x + r.w > A.x + A.w + 0.5 || r.y + r.h > A.y + A.h + 0.5) return true;
     for (let j = 0; j < T.length; j++) {
       if (j === i) continue;
       const o = T[j];
-      if (r.x < o.x + o.w + g && o.x < r.x + r.w + g && r.y < o.y + o.h + g && o.y < r.y + r.h + g) return true;
+      if (r.x < o.x + o.w + gx && o.x < r.x + r.w + gx && r.y < o.y + o.h + gy && o.y < r.y + r.h + gy) return true;
     }
     return false;
   };
@@ -1183,7 +1212,8 @@ function fillGaps(T, S, A) {
 // excluded where it is marked true). compute() refuses others: they would give
 // unusable layouts or NaN.
 const LIMITS = {
-  margin: [0, Infinity], gap: [0, Infinity], fidelity: [0, 1],
+  margin: [0, Infinity], gap: [0, Infinity], extraGapX: [0, Infinity], extraGapY: [0, Infinity],
+  fidelity: [0, 1],
   maxScale: [0, Infinity, true], maxGrowth: [1, Infinity],
   wSize: [0, Infinity], wSizes: [0, Infinity], wPlace: [0, Infinity],
   wRelations: [0, Infinity], neighborFocus: [0, 1],

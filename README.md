@@ -184,9 +184,10 @@ folder, with the folder structure intact; if it can't find the engine, it says
 so.
 
 The lab's simulated desktop is 1920×1080. On a real desktop, the gap between
-thumbnails is larger than the lab shows (on the author's system 58 px instead
-of 8), because Cinnamon draws a title below each thumbnail and a close button
-at a corner, and the extension leaves room for them.
+thumbnails is larger than the lab shows (on the author's system 36 px side by
+side and 58 px one above the other, instead of 8), because Cinnamon draws a
+title below each thumbnail and a close button at a corner, and the extension
+leaves room for them.
 
 
 ## Changing the extension yourself

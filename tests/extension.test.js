@@ -208,7 +208,8 @@ async function runChecks() {
   // the engine's own answer for the same input, with the same settings the extension builds
   const SL = require(path.join(EXT, 'spreadLayout.js'));
   const d = k => schema[k].default;
-  const S = SL.settings('optimizer', { margin: d('margin'), gap: d('gap') + Math.max(CHROME.top + CHROME.bottom, CHROME.left + CHROME.right),
+  const S = SL.settings('optimizer', { margin: d('margin'), gap: d('gap'),
+    extraGapX: CHROME.left + CHROME.right, extraGapY: CHROME.top + CHROME.bottom,
     fidelity: d('fidelity'), maxScale: Math.min(1, d('max-scale')), centered: d('centered'), fill: d('fill'), maxGrowth: d('max-growth'),
     wSize: d('w-size'), wPlace: d('w-place'), wRelations: d('w-relations'), relationsMethod: d('relations-method'), neighborFocus: d('neighbor-focus'),
     steps: d('optimizer-effort') * 100,
@@ -228,7 +229,24 @@ async function runChecks() {
     ok('a minimized window is laid out like the others (exactly as if it weren\'t minimized)', JSON.stringify(placedU) === JSON.stringify(placed)); }
   const mon2 = monitor(frames.slice().reverse()), placed2 = place(mon2, P._computeAllWindowSlots.call(mon2, n));
   ok('another stacking order gives every window the same place', placed2.every(p => { const q = placed.filter(q => q.seq === p.seq)[0]; return q.x === p.x && q.y === p.y; }));
-  ok('window title width limited to the smallest thumbnail plus the gap', mon._slotWidth === Math.floor(Math.min.apply(null, want.map(t => t.w)) + S.gap), mon._slotWidth + ' px');
+  ok('window title width limited to the smallest thumbnail plus the gap side by side', mon._slotWidth === Math.floor(Math.min.apply(null, want.map(t => t.w)) + S.gap + S.extraGapX), mon._slotWidth + ' px');
+  { // two wide windows fit best side by side, as wide as the screen allows
+    settingsNow().setValue('gap', 0);
+    const two = monitor([{ seq: 21, x: 0, y: 200, w: 1600, h: 900 }, { seq: 22, x: 960, y: 300, w: 1600, h: 900 }]);
+    const p = place(two, P._computeAllWindowSlots.call(two, 2)).sort((a, b) => a.x - b.x);
+    const apart = p[1].x - (p[0].x + p[0].w);
+    ok('side by side, thumbnails are only the close buttons\' overhang apart (not also the title\'s room)', Math.abs(apart - CHROME.left - CHROME.right) < 1.01, apart.toFixed(1) + ' px');
+    settingsNow().setValue('gap', d('gap'));
+  }
+  { // a gap of more than twice the margin: the title width follows the screen's edges instead
+    settingsNow().setValue('gap', 80);
+    const wide = monitor(frames), pw = place(wide, P._computeAllWindowSlots.call(wide, n));
+    const sw = wide._slotWidth, minW = Math.min.apply(null, pw.map(p => p.w));
+    const past = pw.filter(p => p.x + p.w / 2 - sw / 2 < -0.5 || p.x + p.w / 2 + sw / 2 > 2560.5).length;
+    ok('with a gap over twice the margin, no window title reaches past the screen edge',
+      !past && Math.abs(sw - Math.floor(minW + 2 * (d('margin') + CHROME.left))) <= 1, sw + ' px, ' + past + ' past the edge');
+    settingsNow().setValue('gap', d('gap'));
+  }
   for (const alg of ['push', 'rows', 'grid']) {
     settingsNow().setValue('algorithm', alg); logs.length = 0;
     const s = P._computeAllWindowSlots.call(monitor(frames), n);
@@ -431,7 +449,7 @@ async function runChecks() {
   }
   ok('no errors', !logs.some(l => l[0] === 'error'), logs.filter(l => l[0] === 'error').map(l => l[1]).join(' | '));
   // Placement: the engine's layout per monitor, with the Expo settings (default: the optimizer)
-  const expoS = SL.settings(schema['expo-algorithm'].default, Object.assign({}, S, { margin: d('expo-margin'), gap: d('expo-gap') + OVERHANG }));
+  const expoS = SL.settings(schema['expo-algorithm'].default, Object.assign({}, S, { margin: d('expo-margin'), gap: d('expo-gap') + OVERHANG, extraGapX: 0, extraGapY: 0 }));
   let placeErr = 0, offMon = 0, clashE = 0, tight = 0;
   MONITORS.forEach((m, mi) => {
     // a window being dragged keeps its place in the layout (as in Cinnamon) but isn't moved

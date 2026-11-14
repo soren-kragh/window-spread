@@ -184,8 +184,9 @@ function computeSlots(mon, n) {
   const [left, right] = overlay ? overlay.chromeWidths() : [0, 0];
 
   const cfg = readConfig("algorithm");
-  // Gap between thumbnails = the user's gap + the decorations of both neighbors.
-  const S = Object.assign({}, cfg.S, { gap: cfg.S.gap + Math.max(top + bottom, left + right) });
+  // Gaps between thumbnails = the user's gap + the decorations of both neighbors: the
+  // close buttons' overhang side by side, close button and title one above the other.
+  const S = Object.assign({}, cfg.S, { extraGapX: left + right, extraGapY: top + bottom });
   // The engine lays out the thumbnails themselves; keep their decorations on screen too.
   const area = { x: mon._x + left, y: mon._y + top, w: mon._width - left - right, h: mon._height - top - bottom };
   // Window frames and stable ids. Minimized windows report their normal frame and are
@@ -219,10 +220,13 @@ function computeSlots(mon, n) {
     const t = byId.get(c.metaWindow.get_stable_sequence());
     thumbCenters.set(c, [t.x + t.w / 2, t.y + t.h / 2]);
   });
-  // Cinnamon limits every window title to the same width, _slotWidth. Use the smallest
-  // thumbnail width plus the gap, so no title can reach into a neighbor's space (long titles
-  // under big thumbnails are shortened a little more than strictly necessary).
-  mon._slotWidth = Math.floor(Math.min(...widths) + S.gap);
+  // Cinnamon limits every window title to the same width, _slotWidth, centered under its
+  // thumbnail. Use the smallest thumbnail width plus the gap side by side, so no title can
+  // reach into a neighbor's space, but at most twice the room at the screen's edges (margin
+  // + decorations), so no title reaches past them (long titles under big thumbnails are
+  // shortened a little more than strictly necessary).
+  const spare = Math.min(S.gap + S.extraGapX, 2 * (S.margin + Math.min(left, right)));
+  mon._slotWidth = Math.floor(Math.min(...widths) + spare);
 
   if (cfg.debug) {
     // Note: opening the view lays out every workspace at once, starting with workspace 0.
@@ -237,7 +241,8 @@ function computeSlots(mon, n) {
     if (!reportedOnce) { // doesn't change during a session
       reportedOnce = true;
       log(`decorations around thumbnails: top ${top}, bottom ${bottom}, left ${left}, right ${right} px; ` +
-        `effective gap ${S.gap} px; monitor area ${mon._x},${mon._y} ${mon._width}x${mon._height}`);
+        `effective gaps ${S.gap + S.extraGapX} px side by side, ${S.gap + S.extraGapY} px ` +
+        `one above the other; monitor area ${mon._x},${mon._y} ${mon._width}x${mon._height}`);
     }
   }
   return slots;
@@ -293,7 +298,8 @@ function expoOverviewModeOn(thumb) {
   // App icon badges overlap each window's top-left corner and stick out EXPO_ICON_OFFSET screen
   // pixels beyond it; in the workspace's full-size coordinates that is |EXPO_ICON_OFFSET| / boxScale.
   // Like the Scale view's titles and close buttons, this room is added to the margin (left and
-  // top) and to the gap, so the settings measure the space between a badge and the next window.
+  // top) and to the gap (the same both ways: a badge sticks out to the left and up), so the
+  // settings measure the space between a badge and the next window.
   const badgeOverhang = -EXPO_ICON_OFFSET / boxScale;
   const own = { margin: settings.getValue("expo-margin"), gap: settings.getValue("expo-gap") + badgeOverhang };
   for (const [key, , engineKey] of EXPO_SETTINGS_MAP) own[engineKey] = settings.getValue(key);

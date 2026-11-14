@@ -171,6 +171,8 @@ async function run() {
     // windows random, all maximized (identical centers), or bigger than the monitor.
     const MONS = [{ x: 1920, y: 300, w: 1338, h: 718 }, { x: 0, y: 0, w: 1052, h: 1870 }];
     const SETS = [{}, { margin: 0 }, { margin: 200 }, { gap: 0 }, { gap: 58 }, { gap: 130 },
+      { gap: 0, extraGapX: 28, extraGapY: 50 }, { gap: 8, extraGapX: 50, extraGapY: 28 },
+      { fill: true, maxGrowth: 3, extraGapX: 28, extraGapY: 50 },
       { fidelity: 0 }, { maxScale: 0.2 }, { centered: true }, { fill: true, maxGrowth: 3 }, { relationsMethod: 'order' },
       { wRelations: 0, wPlace: 0 }];
     const ALGS = [['optimizer', {}], ['optimizer', { starts: 1, startFrom: 'rows' }], ['push', {}],
@@ -195,10 +197,12 @@ async function run() {
         if (![a.x, a.y, a.w, a.h].every(Number.isFinite) || !(a.w > 0 && a.h > 0)) { unusable++; continue; }
         if (a.x < A.x - 0.5 || a.y < A.y - 0.5 || a.x + a.w > A.x + A.w + 0.5 || a.y + a.h > A.y + A.h + 0.5) outside++;
         if (a.scale > S.maxScale + 1e-9) tooBig++;
+        const gx = S.gap + S.extraGapX, gy = S.gap + S.extraGapY;
         for (const b of T) if (a.id < b.id) {
-          const gap = Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h)));
-          if (gap < -0.01) overlaps++;
-          else if (gap < S.gap - 0.01 && S.gap <= 58) tight++; // larger gaps: see the guarantees in the engine
+          const sx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), sy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
+          if (Math.max(sx, sy) < -0.01) overlaps++;
+          // larger gaps: see the guarantees in the engine
+          else if (sx < gx - 0.01 && sy < gy - 0.01 && Math.max(gx, gy) <= 58) tight++;
         }
       }
     }
@@ -206,7 +210,7 @@ async function run() {
       !unusable && !threw.length, runs + ' layouts' + (threw.length ? '; threw: ' + threw[0] : ''));
     ok('no overlaps, inside the margin, scale within the limit', !overlaps && !outside && !tooBig,
       overlaps + ' overlaps, ' + outside + ' outside, ' + tooBig + ' too big');
-    ok('gaps at least the setting, up to the decorations of the default gap (58 px)', !tight, tight + ' pairs too close');
+    ok('gaps at least the settings (also with extra gaps side by side or one above the other), up to the decorations of the default gap (58 px)', !tight, tight + ' pairs too close');
     const crowded = { x: 0, y: 0, w: 1338, h: 718 }, many = frames(crowded, 24, 'rand', 99);
     const fixed1 = SL.compute(many, crowded, 'rows', SL.settings('rows', { rows: 1, gap: 58 })).targets;
     ok('ordered rows with a fixed row count that leaves no room falls back to the best row count',
@@ -219,13 +223,38 @@ async function run() {
         Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h))) < 58 - 0.01) passes10++;
     }
     ok('push-apart with its fewest passes (10) still keeps the gap', !passes10, passes10 + ' pairs too close');
+    { // gaps that leave no room: the polish must not turn "too close" into an overlap
+      const ws11 = [[471, 96, 81, 402], [400, 16, 67, 105], [268, 89, 447, 303], [160, 289, 658, 234], [308, 279, 695, 127],
+        [180, 230, 712, 156], [531, 122, 499, 144], [409, 133, 453, 441], [478, 195, 220, 479], [245, 28, 579, 454],
+        [225, 44, 545, 202]].map(([x, y, w, h], i) => ({ id: i + 1, x, y, w, h }));
+      const T = SL.compute(ws11, { x: 0, y: 0, w: 808, h: 448 }, 'push',
+        SL.settings('push', { gap: 3, extraGapX: 0, extraGapY: 181, margin: 8, wPlace: 10, wRelations: 0 })).targets;
+      let worst = 0;
+      for (const a of T) for (const b of T) if (a.id < b.id) {
+        worst = Math.min(worst, Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h))));
+      }
+      ok('with unequal gaps that leave no room, the polish creates no overlap', worst > -1e-6, 'closest pair ' + worst.toFixed(3) + ' px');
+    }
+    { // crowded (20 windows on a portrait monitor, 58 px gap): the gap takes many rounds to settle
+      const mon = { x: 0, y: 0, w: 1052, h: 1870 }, R = SL.random(3 * 97 + 20);
+      const ws20 = Array.from({ length: 20 }, (_, i) => {
+        const w = 300 + R() * 1100, h = 200 + R() * 700;
+        return { id: i + 1, x: Math.round(R() * Math.max(1, mon.w - w)), y: Math.round(R() * Math.max(1, mon.h - h)), w: Math.round(w), h: Math.round(h) };
+      });
+      const T = SL.compute(ws20, mon, 'optimizer', SL.settings('optimizer', { gap: 58 })).targets;
+      let ratio = 1;
+      for (const a of T) for (const b of T) if (a.id < b.id) {
+        ratio = Math.min(ratio, Math.max(Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w)), Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h))) / 58);
+      }
+      ok('on a crowded screen the gap is still reached (gap widening runs until it settles)', ratio >= 0.9999, 'smallest gap ' + (ratio * 100).toFixed(2) + '% of the setting');
+    }
     const bad = [[{ id: 1, x: 0, y: 0, w: 0, h: 0 }], [{ id: 1, x: NaN, y: 0, w: 10, h: 10 }]];
     const throwsFor = (ws, mon, S) => { try { SL.compute(ws, mon, 'push', S); return false; } catch (e) { return true; } };
     ok('a window of size 0, a non-finite number, or a margin that leaves no area is an error, not an unusable layout',
       bad.every(ws => throwsFor(ws, MON)) &&
       throwsFor(desk(1, 3), { x: 0, y: 0, w: 300, h: 300 }, SL.settings('push', { margin: 200 })));
     const refused = ov => { try { SL.compute(desk(1, 4), MON, 'optimizer', SL.settings('optimizer', ov)); return false; } catch (e) { return /unusable setting/.test(e.message); } };
-    const badSettings = [{ maxScale: 0 }, { fidelity: NaN }, { gap: -1 }, { firstStep: 0 }, { checkpoint: 0 },
+    const badSettings = [{ maxScale: 0 }, { fidelity: NaN }, { gap: -1 }, { extraGapX: -1 }, { extraGapY: -1 }, { firstStep: 0 }, { checkpoint: 0 },
       { relationsMethod: 'angles' }, { startFrom: 'top' }, { steps: 0 }, { pushStart: { passes: 1000, strength: 0, matchShape: 0.5, polish: true } }];
     ok('settings outside their allowed values are an error, not an unusable layout',
       badSettings.every(refused) && !refused({ maxScale: 0.2, fidelity: 0, gap: 0, checkpoint: 1, neighborFocus: 1 }), badSettings.length + ' cases');
