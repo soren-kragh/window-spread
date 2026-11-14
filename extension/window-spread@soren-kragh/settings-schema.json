@@ -158,23 +158,21 @@
     "tooltip": "Writes information for troubleshooting to the log. View it in Looking Glass (Alt+F2, then lg) under Log."
   },
   "margin": {
-    "type": "spinbutton",
-    "default": 16,
+    "type": "scale",
+    "default": 8,
     "min": 0,
     "max": 200,
-    "step": 4,
-    "units": "px",
-    "description": "Margin around the screen edge",
+    "step": 2,
+    "description": "Margin around the screen edge (px)",
     "tooltip": "Empty border kept around the edge of the screen."
   },
   "gap": {
-    "type": "spinbutton",
-    "default": 8,
+    "type": "scale",
+    "default": 4,
     "min": 0,
-    "max": 80,
+    "max": 200,
     "step": 2,
-    "units": "px",
-    "description": "Gap between thumbnails",
+    "description": "Gap between thumbnails (px)",
     "tooltip": "Space between thumbnails."
   },
   "fidelity": {
@@ -222,7 +220,7 @@
   },
   "w-size": {
     "type": "scale",
-    "default": 4,
+    "default": 3,
     "min": 0,
     "max": 5,
     "step": 0.1,
@@ -319,23 +317,21 @@
     "tooltip": "How windows are arranged inside each workspace. None of the algorithms use stacking order or focus.\n\nOptimizer: searches for the best balance of thumbnail size, staying in place and keeping relations (Scoring tab). Slowest: from a few milliseconds up to a few tens with many windows, when windows have changed.\n\nPush apart: starts where the windows are, pushes overlapping ones apart, then scales everything to fit. Fast.\n\nOrdered rows: rows from top to bottom, left to right within a row. Fast.\n\nEqual grid: like Cinnamon's own grid, each window shrunk to fit its cell, but in the cell nearest to where it really is. Fast. Makes even small windows reasonably big, which helps in the small previews."
   },
   "expo-margin": {
-    "type": "spinbutton",
+    "type": "scale",
     "default": 14,
     "min": 0,
     "max": 200,
     "step": 2,
-    "units": "px",
-    "description": "Margin around the edge",
+    "description": "Margin around the edge (px)",
     "tooltip": "Empty border inside each workspace preview."
   },
   "expo-gap": {
-    "type": "spinbutton",
+    "type": "scale",
     "default": 14,
     "min": 0,
-    "max": 80,
+    "max": 200,
     "step": 2,
-    "units": "px",
-    "description": "Gap between thumbnails",
+    "description": "Gap between thumbnails (px)",
     "tooltip": "Space between windows inside each workspace preview."
   },
   "expo-fidelity": {

@@ -64,7 +64,9 @@
    Guarantees
      - Only window positions and sizes are read. Stacking order and focus history are
        never used: windows are processed in an order derived from geometry alone.
-     - Deterministic: the same input and settings always give the same result.
+     - Deterministic: the same input and settings always give the same result, and
+       the same layout (moved along) wherever the monitor is (for whole-pixel
+       coordinates, as window frames are).
      - Thumbnails never overlap, keep at least `gap` px between them, plus
        `extraGapX` side by side or `extraGapY` one above the other (unless the gaps
        leave no room on the monitor; see DEVELOPMENT.md section 4), and stay inside
@@ -94,8 +96,8 @@ function createSpreadLayout() {
 const DEFAULTS = {
   // Used by every algorithm.
   common: {
-    margin: 16,        // px of empty border kept inside the monitor area
-    gap: 8,            // px minimum gap between thumbnails
+    margin: 8,         // px of empty border kept inside the monitor area
+    gap: 4,            // px minimum gap between thumbnails
     extraGapX: 0,      // px added to the gap between thumbnails side by side, and
     extraGapY: 0,      // between thumbnails one above the other (for the caller's decorations)
     fidelity: 0.8,       // relative sizes: 1 = exact, 0 = all thumbnails same area, 0.5 = area ratios square-rooted
@@ -107,7 +109,7 @@ const DEFAULTS = {
   // What a good layout is. Used by the optimizer's search, by the polish step and by score().
   // Only the balance between the weights matters.
   scoring: {
-    wSize: 4,          // reward for bigger thumbnails
+    wSize: 3,          // reward for bigger thumbnails
     wSizes: 5,         // penalty for uneven scaling (sizes no longer match the real windows)
     wPlace: 2,         // penalty for thumbnails far from their real window
     wRelations: 1,     // penalty for windows changing how they sit relative to each other
@@ -1265,16 +1267,23 @@ function compute(windows, monitor, algorithm, S) {
   checkSettings(S, "");
   if (S.pushStart) checkSettings(S.pushStart, "pushStart.");
   if (S.rowsStart) checkSettings(S.rowsStart, "rowsStart.");
-  const ws = windows.map(w => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h }));
-  const A = workArea(monitor, S.margin), info = {};
+  const A0 = workArea(monitor, S.margin), info = {};
   // Input nothing can be laid out from (and that could make the algorithms misbehave)
-  if (![A.x, A.y, A.w, A.h].every(Number.isFinite) || !(A.w > 0) || !(A.h > 0))
+  if (![A0.x, A0.y, A0.w, A0.h].every(Number.isFinite) || !(A0.w > 0) || !(A0.h > 0))
     throw new Error("no usable area: monitor " + JSON.stringify(monitor) + ", margin " + S.margin);
-  for (const w of ws) {
-    if (![w.id, w.x, w.y, w.w, w.h].every(Number.isFinite) || !(w.w > 0) || !(w.h > 0))
-      throw new Error("unusable window frame: " + JSON.stringify(w));
+  for (const w of windows) {
+    if (![w.id, w.x, w.y, w.w, w.h].every(Number.isFinite) || !(w.w > 0) || !(w.h > 0)) {
+      throw new Error(
+        "unusable window frame: " + JSON.stringify({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h })
+      );
+    }
   }
-  if (!ws.length) return { targets: [], score: null, info };
+  if (!windows.length) return { targets: [], score: null, info };
+  // Laid out relative to the monitor's corner, so the result is the same wherever the
+  // monitor is (rounding would otherwise differ, and the optimizer can amplify that).
+  const ox = monitor.x, oy = monitor.y;
+  const ws = windows.map(w => ({ id: w.id, x: w.x - ox, y: w.y - oy, w: w.w, h: w.h }));
+  const A = workArea({ x: 0, y: 0, w: monitor.w, h: monitor.h }, S.margin);
   const shared = {}; // what the optimizer hands on to its safeguard
   let T = algo.run(ws, S, A, info, shared);
   if (algo.uniformScale && !S.centered) T = placeNearReal(T, ws, A);
@@ -1288,7 +1297,7 @@ function compute(windows, monitor, algorithm, S) {
   const sc = scoreLayout(T, ws, S, A);
   if (algo.uniformScale && S.centered) T = centerLayout(T, A);
   return {
-    targets: T.map(t => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h, scale: t.w / t.ow })),
+    targets: T.map(t => ({ id: t.id, x: t.x + ox, y: t.y + oy, w: t.w, h: t.h, scale: t.w / t.ow })),
     score: sc,
     info,
   };

@@ -62,6 +62,16 @@ async function run() {
       !overlaps && !tightGaps && !outside && !tooBig, runs + ' layouts');
     ok(alg + ': deterministic, independent of input order (stacking) and of extra fields (minimized, focus)',
       !nondet && !orderDep && !extraDep);
+    let moved = 0;
+    for (const n of [3, 8, 16]) for (const seed of [1, 2]) for (const [dx, dy] of [[2560, 200], [-1920, 37]]) {
+      // whole pixels, as real window frames are (fractions would round differently once moved)
+      const ws = desk(seed, n).map(w => ({ id: w.id, x: Math.round(w.x), y: Math.round(w.y), w: Math.round(w.w), h: Math.round(w.h) }));
+      const S = quick(alg), T = SL.compute(ws, MON, alg, S).targets;
+      const U = SL.compute(ws.map(w => Object.assign({}, w, { x: w.x + dx, y: w.y + dy })),
+        { x: MON.x + dx, y: MON.y + dy, w: MON.w, h: MON.h }, alg, S).targets;
+      if (T.some((t, i) => Math.abs(t.x + dx - U[i].x) > 1e-9 || Math.abs(t.y + dy - U[i].y) > 1e-9 || t.w !== U[i].w)) moved++;
+    }
+    ok(alg + ': the same layout wherever the monitor is (e.g. a second monitor)', !moved, moved + ' differ');
   }
 
   section('Engine: uniform scale');
@@ -210,7 +220,7 @@ async function run() {
       !unusable && !threw.length, runs + ' layouts' + (threw.length ? '; threw: ' + threw[0] : ''));
     ok('no overlaps, inside the margin, scale within the limit', !overlaps && !outside && !tooBig,
       overlaps + ' overlaps, ' + outside + ' outside, ' + tooBig + ' too big');
-    ok('gaps at least the settings (also with extra gaps side by side or one above the other), up to the decorations of the default gap (58 px)', !tight, tight + ' pairs too close');
+    ok('gaps at least the settings (also with extra gaps side by side or one above the other), up to 58 px (more than the default gap plus decorations)', !tight, tight + ' pairs too close');
     const crowded = { x: 0, y: 0, w: 1338, h: 718 }, many = frames(crowded, 24, 'rand', 99);
     const fixed1 = SL.compute(many, crowded, 'rows', SL.settings('rows', { rows: 1, gap: 58 })).targets;
     ok('ordered rows with a fixed row count that leaves no room falls back to the best row count',

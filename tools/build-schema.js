@@ -37,8 +37,8 @@ const schema={
       'switching it off is only useful for troubleshooting.'},
   'debug-log':{type:'switch',default:false,description:'Write diagnostics to the log',tooltip:'Writes information for troubleshooting to the log. View it in Looking Glass (Alt+F2, then lg) under Log.'},
 
-  'margin':spin('common','margin','Margin around the screen edge',0,200,4,'px','Empty border kept around the edge of the screen.'),
-  'gap':spin('common','gap','Gap between thumbnails',0,80,2,'px','Space between thumbnails.'),
+  'margin':scale('common','margin','Margin around the screen edge (px)',0,200,2,'Empty border kept around the edge of the screen.'),
+  'gap':scale('common','gap','Gap between thumbnails (px)',0,200,2,'Space between thumbnails.'),
   'fidelity':scale('common','fidelity','Size fidelity',0,1,0.05,'1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences.',{dependency:'algorithm!=grid'}),
   'max-scale':scale('common','maxScale','Largest thumbnail scale',0.2,1,0.05,'Largest size of a thumbnail compared with its real window; 1 means real size.'),
   'centered':sw('common','centered','Always center the arrangement','When off, the arrangement is moved toward where the real windows are, as far as the screen allows.',{dependency:'algorithm!=grid'}),
@@ -68,9 +68,9 @@ const schema={
   'expo-algorithm':{type:'combobox',default:'optimizer',description:'Layout algorithm',options:{'Optimizer':'optimizer','Push apart':'push','Ordered rows':'rows','Equal grid':'grid'},
     tooltip:algoTooltip('How windows are arranged inside each workspace.',
       ' Makes even small windows reasonably big, which helps in the small previews.')},
-  'expo-margin':{type:'spinbutton',default:14,min:0,max:200,step:2,units:'px',description:'Margin around the edge',
+  'expo-margin':{type:'scale',default:14,min:0,max:200,step:2,description:'Margin around the edge (px)',
     tooltip:'Empty border inside each workspace preview.'},
-  'expo-gap':{type:'spinbutton',default:14,min:0,max:80,step:2,units:'px',description:'Gap between thumbnails',
+  'expo-gap':{type:'scale',default:14,min:0,max:200,step:2,description:'Gap between thumbnails (px)',
     tooltip:'Space between windows inside each workspace preview.'},
   // Expo's own copies of the layout settings below; same defaults (engine DEFAULTS), same meaning.
   'expo-fidelity':scale('common','fidelity','Size fidelity',0,1,0.05,'1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences. Lower values make small windows easier to see in the small previews.',{dependency:'expo-algorithm!=grid'}),

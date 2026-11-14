@@ -245,13 +245,15 @@ cleanup, gap enforcement and safeguard run the same at any effort).
 
 * No stacking order, focus, or minimized state is ever used; input order doesn't
   matter.
-* Deterministic: same input and settings, same output.
+* Deterministic: same input and settings, same output; moving the monitor and
+  its windows together by whole pixels (e.g. a second monitor) moves the layout
+  along, exactly.
 * No overlaps; everything inside the monitor minus `margin` (to 0.5 px); scale
   at most `maxScale`; finite positions and sizes above 0.
 * Gaps at least `gap`, plus `extraGapX` side by side or `extraGapY` one above
   the other, unless the gaps are too large for the screen and the number of
-  windows (tested up to an effective gap of 58 px, the default gap plus
-  decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
+  windows (tested up to an effective gap of 58 px, more than the default gap
+  plus decorations). With very large gaps (e.g. 130 px, 12 or more windows on a
   1366×768 screen) push apart's overlap removal stops short and gaps can be
   smaller; the equal grid shrinks its gaps when they would leave no room for
   the cells; ordered rows with a fixed row count that doesn't fit uses the best
@@ -443,9 +445,9 @@ the widget's current value (`set_object_value()` in `JsonSettingsWidgets.py`). A
 new GTK spin button already holds 0, so a spin button whose setting is 0 is
 never updated and shows no number at all (the value itself is correct). Hence
 "Number of rows", where 0 means automatic, is a drop-down (Automatic, 1 row, ...
-8 rows); drop-downs are set through a listener and don't have this problem. A
-test fails if a spin button gets a default of 0. Margin and gap would also show
-blank if a user set them to exactly 0; harmless and rare, so left as is.
+8 rows); drop-downs are set through a listener and don't have this problem.
+Margins and gaps are sliders (0-200 px, steps of 2), which show 0 correctly
+(checked on 6.0.5). A test fails if a spin button can be set to 0.
 
 ### 5.15 Equal grid: nearest cell (Hungarian method)
 The grid used to fill cells in reading order of window position (rows by height,
@@ -678,8 +680,8 @@ Baseline first: with both at 0, every algorithm gives the same layouts as
 before (294 random desktops as in 5.20, regenerated: 1920×1053 and 2560×1440,
 3-30 windows; 7 setting variants, the optimizer's only at its defaults from
 21 windows; 7728 layouts, the largest difference 1e-12, from rounding). With
-the decorations above and the default gap and margin, compared with the old
-single gap of 58 px, per desktop:
+the decorations above and the then default gap and margin (8 / 16), against
+the old single gap of 58 px, per desktop:
 
 | Algorithm  | Score better / worse | Worst  | Mean thumbnail scale        |
 |------------|----------------------|--------|-----------------------------|
@@ -790,9 +792,9 @@ Tested against the source of the latest release of each series (as of November
 Via the diagnostics log:
 
 * Decorations: top 14, bottom 36, left 14, right 14 px. With the default gap of
-  8 px this gives effective gaps of 36 px side by side and 58 px one above the
+  4 px this gives effective gaps of 32 px side by side and 54 px one above the
   other. Because the decorations are added to margin and gaps automatically,
-  the Show all windows defaults are small (16 / 8).
+  the Show all windows defaults are small (8 / 4).
 * Minimized windows report their normal frame (e.g. 1154×761 at 1321,605).
 * First computation, optimizer, Show all windows (Ryzen 9 5900X, 2026-11-13):
   1 window 0.2-0.5 ms, 2-3 windows 2.4-6.3 ms (the highest is the first layout

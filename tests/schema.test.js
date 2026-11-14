@@ -59,8 +59,8 @@ async function run() {
     return false;
   });
   ok('defaults are valid: within range and on the step grid, among the options, booleans for switches', !bad.length, bad.join(', '));
-  const blankSpin = entries.filter(k => schema[k].type === 'spinbutton' && schema[k].default === 0);
-  ok('no spin button defaults to 0 (Cinnamon\'s dialog would show it blank)', !blankSpin.length, blankSpin.join(', '));
+  const blankSpin = entries.filter(k => schema[k].type === 'spinbutton' && schema[k].min <= 0);
+  ok('no spin button can be set to 0 (Cinnamon\'s dialog would show it blank)', !blankSpin.length, blankSpin.join(', '));
   const comboTypes = entries.filter(k => schema[k].type === 'combobox').filter(k => {
     const vals = Object.keys(schema[k].options).map(l => schema[k].options[l]);
     return vals.some(v => typeof v !== typeof vals[0]);
