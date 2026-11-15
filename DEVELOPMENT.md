@@ -31,7 +31,7 @@ extension/window-spread@soren-kragh/
   settings-schema.json            settings dialog definition (generated)
   metadata.json                   extension metadata
   icon.png, LICENSE               icon (from docs/icon.svg), license copy
-docs/                             icon source, screenshot
+docs/                             icon source, screenshot, demo video
 tools/build-schema.js             generates settings-schema.json
 tools/build-spices.js             builds the Spices package (section 9)
 tools/spices/                     Spices' README and info.json
