@@ -14,9 +14,9 @@ real windows, keep their relative sizes, and **never depend on stacking order or
 focus history**. That last point is the motivation: Cinnamon's own Scale view
 fills a grid in stacking order, so the arrangement changes whenever another
 window was focused. Status: works on the target system (Linux Mint 21.3,
-Cinnamon 6.0.5, one 2560×1440 monitor) and on a fresh Linux Mint 22.3 install
-(Cinnamon 6.6.9), tested against the source of Cinnamon 6.0 to 6.8 (section
-6.1).
+Cinnamon 6.0.5, one 2560×1440 monitor), on a fresh Linux Mint 22.3 install
+(Cinnamon 6.6.9) and on EndeavourOS (Cinnamon 6.8.0, X11 and Wayland); tested
+against the source of Cinnamon 6.0 to 6.8 (section 6.1).
 
 
 ## 2. Files and the rules that keep them consistent
@@ -463,6 +463,11 @@ Tested against the latest release of each series (November 2026): 6.0.5,
     thumbnails can land up to 1 px off).
   * `prepareOverviewGesture()` (touchpad) also calls `_computeAllWindowSlots()`;
     not covered by a test.
+  * Checked in real sessions (EndeavourOS, X11 and Wayland): loads through the
+    native importer with no deprecation warning; both views, arrow keys, the
+    settings window, switching off and on, caching, minimized windows and Expo
+    badges work. Decorations depend on the theme (16/43/16/16 px with
+    Arc-Dark) and are read at run time.
 * `cinnamon-version` in `metadata.json` holds minimum versions, so "6.0" alone
   would do; it lists every tested series so readers see what is tested.
 

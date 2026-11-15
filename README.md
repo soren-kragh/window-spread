@@ -127,9 +127,10 @@ window-spread/
 └── tests/                           automated checks: node tests/run-all.js
 ```
 
-Tested against the source of every Cinnamon series from 6.0 to 6.8, on Linux
-Mint 21.3 (Cinnamon 6.0.5), and on a fresh install of Linux Mint 22.3 (Cinnamon
-6.6.9). To change the extension, start with `DEVELOPMENT.md`.
+Tested against the source of every Cinnamon series from 6.0 to 6.8, and in
+real sessions on Linux Mint 21.3 (Cinnamon 6.0.5), a fresh Linux Mint 22.3
+(Cinnamon 6.6.9) and EndeavourOS (Cinnamon 6.8.0, on X11 and Wayland). To
+change the extension, start with `DEVELOPMENT.md`.
 
 
 ## The lab
