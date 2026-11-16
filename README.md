@@ -6,12 +6,9 @@ really are and how big they are. Cinnamon's own arrangement is a grid filled in
 stacking order, so windows jump around depending on which one you used last;
 with Window Spread they don't. Everything else stays Cinnamon's own.
 
-https://github.com/user-attachments/assets/2eb7bb63-d516-4851-9a9a-76263b06f196
+https://github.com/user-attachments/assets/145fe326-ba79-433b-896b-0c77a3298c43
 
-The demo above is also in `docs/window-spread.mp4`. A still of Show all
-windows:
-
-![Show all windows with Window Spread](docs/screenshot.png)
+The demo above is also in `docs/window-spread.mp4`.
 
 Works with Cinnamon 6.0 to 6.8 (Linux Mint 21.3 and later).
 
