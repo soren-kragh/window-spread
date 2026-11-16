@@ -41,7 +41,7 @@ const schema={
   'gap':scale('common','gap','Gap between thumbnails (px)',0,200,2,'Space between thumbnails.'),
   'fidelity':scale('common','fidelity','Size fidelity',0,1,0.05,'1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences.',{dependency:'algorithm!=grid'}),
   'max-scale':scale('common','maxScale','Largest thumbnail scale',0.2,1,0.05,'Largest size of a thumbnail compared with its real window; 1 means real size.'),
-  'centered':sw('common','centered','Always center the arrangement','When off, the arrangement is moved toward where the real windows are, as far as the screen allows.',{dependency:'algorithm!=grid'}),
+  'centered':sw('common','centered','Center the arrangement','Moves the finished arrangement as a whole to the middle of the screen.',{dependency:'algorithm!=grid'}),
   'fill':sw('common','fill','Fill gaps afterwards','Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.',{dependency:'algorithm!=grid'}),
   'max-growth':scale('common','maxGrowth','Fill gaps: maximum growth',1,3,0.1,'The most a thumbnail may grow while filling gaps.',{dependency:'fill'}),
 
@@ -75,7 +75,7 @@ const schema={
   // Expo's own copies of the layout settings below; same defaults (engine DEFAULTS), same meaning.
   'expo-fidelity':scale('common','fidelity','Size fidelity',0,1,0.05,'1 keeps true size ratios between windows; 0 gives every thumbnail the same area; values in between compress size differences. Lower values make small windows easier to see in the small previews.',{dependency:'expo-algorithm!=grid'}),
   'expo-max-scale':scale('common','maxScale','Largest thumbnail scale',0.2,1,0.05,'Largest size of a thumbnail compared with its real window; 1 means real size.'),
-  'expo-centered':sw('common','centered','Always center the arrangement','When off, the arrangement is moved toward where the real windows are, as far as the preview allows.',{dependency:'expo-algorithm!=grid'}),
+  'expo-centered':sw('common','centered','Center the arrangement','Moves the finished arrangement as a whole to the middle of the preview.',{dependency:'expo-algorithm!=grid'}),
   'expo-fill':sw('common','fill','Fill gaps afterwards','Lets thumbnails grow into free space after layout. Uses space better but makes sizes less faithful.',{dependency:'expo-algorithm!=grid'}),
   'expo-max-growth':scale('common','maxGrowth','Fill gaps: maximum growth',1,3,0.1,'The most a thumbnail may grow while filling gaps.',{dependency:'expo-fill'}),
 

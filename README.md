@@ -95,12 +95,13 @@ Cinnamon restarts). To see what it does:
    this extension start with `[window-spread]`.
 
 For Show all windows you'll see, per monitor and workspace each time the view
-opens: the number of windows, the algorithm, whether the layout was computed
-or reused, the time and the score; the frame of each minimized window (it
-should be its normal position and size; if it's 0×0 or far off screen, please
-report it); and once the size of the decorations around thumbnails. Show all
-workspaces logs a line marked `expo,` each time it arranges a workspace (on
-hover, for example). Switch the diagnostics off again afterwards.
+opens: the number of windows, the algorithm, whether the layout was computed or
+reused, the time and the score (lower is better); the frame of each minimized
+window (it should be its normal position and size; if it's 0×0 or far off
+screen, please report it); and once the size of the decorations around
+thumbnails. Show all workspaces logs a line marked `expo,` each time it arranges
+a workspace (on hover, for example). Switch the diagnostics off again
+afterwards.
 
 Report problems at https://github.com/soren-kragh/window-spread.
 
@@ -145,10 +146,11 @@ compare algorithms and tune settings; the (i) buttons explain everything. It
 loads the extension's own engine file, so it computes exactly what the
 extension does, and it only works from inside this folder.
 
-On a real desktop the gaps between thumbnails are larger than in the lab
-(on the author's system 32 px side by side and 54 px one above the other,
-instead of 4): the extension leaves room for Cinnamon's titles and close
-buttons.
+The lab has more settings than the extension: it also exposes the algorithms'
+internal settings (such as the optimizer's starts and step size) and a
+"Keep sizes" weight, which the extension keeps at their defaults. On a real
+desktop the gaps between thumbnails are also larger than in the lab, because
+the extension leaves room for Cinnamon's titles and close buttons.
 
 
 ## Changing it yourself

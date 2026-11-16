@@ -144,7 +144,7 @@ async function run() {
     ok('a monitor elsewhere (e.g. a second monitor) gives the same layout, shifted', dev < 1e-6, 'max deviation ' + dev.toExponential(1) + ' px');
   }
 
-  section('Engine: always center the arrangement');
+  section('Engine: center the arrangement');
   {
     // windows crowded at the left edge, with and without polish and gap filling
     const left = n => desk(5, n).map(w => Object.assign({}, w, { x: w.x / 4 }));
@@ -173,6 +173,20 @@ async function run() {
       cases + ' layouts of windows at the left edge, worst off-center ' +
         worst.toExponential(1) + ' px'
     );
+    // centering is only a final move: the same layout as without it, shifted
+    let notShift = 0, runs = 0;
+    for (const alg of ['optimizer', 'push', 'rows']) for (const n of [2, 5, 9]) for (const seed of [1, 2]) {
+      for (const ov of [{}, { fill: true }, { relationsMethod: 'order' }]) {
+        const ws = desk(seed, n), a = SL.compute(ws, mon, alg, quick(alg, ov)).targets;
+        const b = SL.compute(ws, mon, alg, quick(alg, Object.assign({ centered: true }, ov))).targets;
+        const dx = b[0].x - a[0].x, dy = b[0].y - a[0].y;
+        if (b.some((t, i) => Math.abs(t.x - a[i].x - dx) > 1e-9 || Math.abs(t.y - a[i].y - dy) > 1e-9 ||
+          t.w !== a[i].w || t.h !== a[i].h)) notShift++;
+        runs++;
+      }
+    }
+    ok('centering moves the finished layout as a whole: otherwise the same layout as without it',
+      !notShift, notShift + ' of ' + runs + ' differ');
   }
 
   section('Engine: settings at the edges of their ranges, small and odd monitors');

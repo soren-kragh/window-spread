@@ -72,31 +72,44 @@ The public API is documented at the top of the file. `compute()` runs:
      score) wins.
    * `grid`: equal grid, each window in its nearest cell (5.8). Scales windows
      unevenly.
-2. **Placement:** unless `centered`, the arrangement moves as a whole toward the
-   real windows, as far as the work area allows (5.2).
+2. **Placement:** the arrangement moves as a whole toward the real windows, as
+   far as the work area allows (5.2).
 3. **Polish** (optimizer, push): greedy small moves into free space that lower
    the score (5.2).
 4. **Safeguard** (optimizer): the push-apart and ordered-rows layouts are
    finished the same way, and the best-scoring layout wins (5.6).
 5. **Fill gaps** (optional): thumbnails grow into free space.
 6. **Score.**
-7. **Center** (if `centered`): last, because the polish, the safeguard and gap
-   filling would undo an earlier centering; after the score, because the user
-   asked for this move, so it shouldn't count as a worse fit.
+7. **Center** (if `centered`): the finished layout is moved as a whole to the
+   middle of the work area, like a change of viewpoint. Nothing before it, the
+   score included, depends on the setting, so the centered layout is exactly
+   the uncentered one, shifted (by design; `tests/engine.test.js` checks it).
 
 All of it runs relative to the monitor's corner, so the result is the same
 wherever the monitor is.
 
 **Score** (lower is better; it drives the optimizer, the polish and all
-comparisons): `wSize × size + wSizes × distortion + wPlace × movement +
-wRelations × relations`, plus an overlap term that only matters during the
-search. Size is the mean −ln(scale) after removing the intended size-fidelity
-factor (thumbnails held at the max scale: 5.4). Distortion is the mean absolute
-deviation of log scales (0 for one shared scale). Movement is the mean distance
-from real centers, relative to the screen diagonal. Relations: "order"
-(left/right, above/below flips, weighted by orientation) or "direction" (change
-of angle between window pairs, with neighbor focus); see 5.7. Internal
-constants are in `INTERNAL`, with comments.
+comparisons): `wSize × size + wSizes × 2 × distortion + wPlace × 2 × movement +
+wRelations × 4 × relations`, plus an overlap term (`W_OVERLAP`) that is 0 unless
+thumbnails still overlap; the descent uses its own (5.3). The parts are reported
+as `size`, `sizes` (distortion), `movement`, `relations` and `overlap`, with
+their sum as `total`. Size is the mean −ln(scale) after removing the intended
+size-fidelity factor (thumbnails held at the max scale: 5.4). Distortion is the
+mean absolute deviation of log scales (0 for one shared scale). Movement is the
+mean distance from real centers divided by the screen diagonal. Relations is the
+weighted sum of the pairs' changes divided by the sum of the pair weights:
+"order" (left/right, above/below flips, weighted by orientation) or "direction"
+(change of angle between window pairs, with neighbor focus); see 5.7. The
+factors are `W_DISTORT` (2) and `W_REL` (4) in `INTERNAL`, and a fixed 2 for
+movement. For comparing layouts only the balance of the weights matters; the
+optimizer's descent also weighs them against its own overlap weight (rising from
+3 to 300), so scaling all of them changes its results.
+
+Each term is a cost. The settings window, and the comments in `DEFAULTS`,
+present the weights as rewards for the opposite qualities: `wSize` "Thumbnail
+size" (bigger thumbnails), `wPlace` "Stay in place", `wRelations` "Keep
+relations"; `DEFAULTS` describes `wSizes` (only in the lab, where it is
+presented as a cost) the same way.
 
 ### Extension (`extension.js`)
 
@@ -223,13 +236,14 @@ Windows are sorted by center y, center x, width, height, then id before
 anything else, so every algorithm is independent of input order and stacking.
 
 ### 5.2 Placement toward real windows, and the polish
-Centering the arrangement makes edge windows counterweights for the others,
-and a search can leave slack, so thumbnails stay away from their windows
-although free space would let them closer. Moving the arrangement toward the
-real windows and a greedy polish: layouts where a window could move 60 px
-closer into free space 24 → 1 of 80 (relations off), 62 → 47 with relations on,
-the rest being genuine trade-offs (annealing, 12 windows). Placement, gap
-filling and centering apply to the one-scale algorithms, not the equal grid.
+A layout kept centered on the screen leaves thumbnails away from their windows
+(in a search, edge windows become counterweights for the others), and a search
+can leave slack, so thumbnails stay away although free space would let them
+closer. Moving the arrangement toward the real windows and a greedy polish:
+layouts where a window could move 60 px closer into free space 24 → 1 of 80
+(relations off), 62 → 47 with relations on, the rest being genuine trade-offs
+(annealing, 12 windows). Placement, gap filling and centering apply to the
+one-scale algorithms, not the equal grid.
 
 The polish is exact but cheap: the "before" value is computed once per
 position, only neighbors within reach of the step are checked, overlap terms
@@ -304,24 +318,25 @@ up, and much more code).
   soon as nothing overlaps (at most 226 passes on the test desktops); a lower
   limit only leaves overlaps for the cruder final cleanup. It stays as a safety
   limit.
-* **Also rejected:** a size term charging thumbnails held at the max scale,
-  with extra steps steering the descent back below the limit; 5.4 made it
-  unnecessary.
+* **Also rejected:** a size term counting thumbnails held at the max scale as
+  too small, with extra steps steering the descent back below the limit; 5.4
+  made it unnecessary.
 
 ### 5.4 Size term and the max scale
-Uneven scaling is charged ("Keep sizes"): otherwise the equal grid wins on
-score just by enlarging small windows more than big ones. It isn't in the
-extension's settings, where it only affects the equal grid and gap filling,
-which don't search by the score; the lab keeps it for fair comparisons.
+Uneven scaling costs ("Keep sizes", the distortion term): otherwise the equal
+grid wins on score just by enlarging small windows more than big ones. It isn't
+in the extension's settings: there it only changes the score of the equal grid
+and gap filling, which don't search by it, so it never changes a layout; the lab
+keeps it for fair comparisons.
 
 A thumbnail held at the max scale counts as large as the largest one that isn't
-(as the max scale if all are). Charging it would reward shrinking larger
-windows below the limit so that ratios match: smaller thumbnails, scored as
-better. On 300 desktops of 2-8 windows (annealing, max scale 1 and 0.9) the
-optimizer's layout changed on 45 (34 at 0.9), always to bigger thumbnails in
-total, never with fewer windows at the max scale. The max scale defaults to
-0.9: at 1, one window or a few that fit look exactly as on the desktop, so the
-view seems to do nothing.
+(as the max scale if all are). Counting it at its real scale would favor
+shrinking larger windows below the limit so that ratios match: smaller
+thumbnails, scored as better. On 300 desktops of 2-8 windows (annealing, max
+scale 1 and 0.9) the optimizer's layout changed on 45 (34 at 0.9), always to
+bigger thumbnails in total, never with fewer windows at the max scale. The max
+scale defaults to 0.9: at 1, one window or a few that fit look exactly as on the
+desktop, so the view seems to do nothing.
 
 ### 5.5 Gaps
 * **Exact gaps:** push apart and the optimizer widen the padding until the real
@@ -354,11 +369,11 @@ settings, `pushStart`/`rowsStart`) compete with the search result: 0 losses in
   the windows and above/below by sin². Otherwise two windows far apart at
   almost the same height count as "above/below" and hold each other in place
   (measured: 90 px from home instead of 1 px).
-* **Rejected:** capping the Direction penalty for already-broken relations. It
-  weakens the relations term overall, so the optimizer packs tighter instead (a
-  test window's distance from home 153 → 170-234 px, annealing). The fix was
-  the weights:
-  neighbor focus 0.5, keep relations 1, stay in place 2.
+* **Rejected:** capping how much an already-broken relation counts (Direction
+  method). It weakens the relations term overall, so the optimizer packs
+  tighter instead (a test window's distance from home 153 → 170-234 px,
+  annealing). The fix was the weights: `neighborFocus` 0.5, `wRelations` 1,
+  `wPlace` 2.
 
 ### 5.8 Equal grid: nearest cell
 Each window goes in its nearest cell: the assignment with the smallest total
