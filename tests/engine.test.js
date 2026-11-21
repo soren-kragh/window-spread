@@ -37,6 +37,22 @@ async function run() {
   ok('empty input gives an empty result', SL.compute([], MON, 'optimizer').targets.length === 0);
   let threw = false; try { SL.compute(desk(1, 3), MON, 'bogus'); } catch (e) { threw = true; }
   ok('unknown algorithm is an error', threw);
+  // Settings left out are filled in from the defaults (they used to become NaN,
+  // and the equal grid then never finished on 2 windows).
+  const partial = { margin: 30, fidelity: 1 };
+  ok('settings left out are taken from the defaults, for every algorithm',
+    SL.ALGORITHMS.every(alg => [2, 4, 9].every(n => {
+      const a = SL.compute(desk(2, n), MON, alg, Object.assign({ steps: 200 }, partial));
+      const b = SL.compute(desk(2, n), MON, alg, quick(alg, Object.assign({ steps: 200 }, partial)));
+      return JSON.stringify(a) === JSON.stringify(b) && a.targets.every(t => Number.isFinite(t.x));
+    })));
+  const ps = SL.settings('optimizer', { pushStart: { passes: 5 } }).pushStart;
+  ok('a partial pushStart is filled in from the push-apart defaults',
+    ps.passes === 5 && ps.strength === SL.DEFAULTS.push.strength && ps.polish === SL.DEFAULTS.push.polish);
+  const full = SL.compute(desk(3, 5), MON, 'push');
+  ok('score() takes settings left out from the defaults',
+    JSON.stringify(SL.score(full.targets, desk(3, 5), MON, { margin: 8 })) ===
+    JSON.stringify(SL.score(full.targets, desk(3, 5), MON, SL.settings('push'))));
 
   section('Engine: guarantees, for every algorithm (1 to 16 windows)');
   for (const alg of SL.ALGORITHMS) {

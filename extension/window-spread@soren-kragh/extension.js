@@ -137,7 +137,7 @@ function checkedTargets(res, windows) {
     return byId;
 }
 
-// After a fallback the layout is Cinnamon's, so keyboard navigation must be too.
+// After a fallback the layout is Cinnamon's, so keyboard navigation is too.
 function forgetCenters(mon) {
     for (const c of mon._windows || [])
         thumbCenters.delete(c);
@@ -183,8 +183,16 @@ function readConfig(algorithmKey, overrides) {
     };
 }
 
-// Replaces WorkspaceMonitor._computeAllWindowSlots(n). Returns one slot per
-// window in mon._windows order, or null to use Cinnamon's original.
+/**
+ * computeSlots:
+ * @mon: the WorkspaceMonitor
+ * @n: the number of windows
+ *
+ * Replaces WorkspaceMonitor._computeAllWindowSlots(n).
+ *
+ * Returns: one slot per window in mon._windows order, or null to use
+ * Cinnamon's original
+ */
 function computeSlots(mon, n) {
     if (!settings.getValue('scale-enabled'))
         return null;
@@ -310,8 +318,16 @@ function describeSlot(mon) {
         (name ? ` ("${name}")` : '');
 }
 
-// Replaces WorkspaceMonitor.selectAnotherWindow(symbol): arrow keys move to the
-// nearest thumbnail in that direction. Returns null to use Cinnamon's original.
+/**
+ * selectInDirection:
+ * @mon: the WorkspaceMonitor
+ * @symbol: the key pressed
+ *
+ * Replaces WorkspaceMonitor.selectAnotherWindow(symbol): arrow keys move to
+ * the nearest thumbnail in that direction.
+ *
+ * Returns: whether the key was handled, or null to use Cinnamon's original
+ */
 function selectInDirection(mon, symbol) {
     const dirs = {};
     dirs[Clutter.KEY_Left] = [-1, 0];
@@ -354,16 +370,23 @@ function selectInDirection(mon, symbol) {
     return true;
 }
 
-// Replaces ExpoWorkspaceThumbnail.overviewModeOn() (`thumb` is the workspace
-// thumbnail). Cinnamon's method computes its grid inline, with no hook for the
-// positions, so this repeats its steps with positions from the engine (the
-// tests flag any change to Cinnamon's version). Returns false to run
-// Cinnamon's original instead.
-//
-// Cinnamon 6.0-6.6 keep the clone's actor in `window.actor` and the scale in
-// `box.scale`; in 6.8 the clone is the actor and the scale is
-// `box.thumbnail_scale`.
+/**
+ * expoOverviewModeOn:
+ * @thumb: the ExpoWorkspaceThumbnail
+ *
+ * Replaces ExpoWorkspaceThumbnail.overviewModeOn(). Cinnamon's method computes
+ * its grid inline, with no hook for the positions, so this repeats its steps
+ * with positions from the engine (the tests flag any change to Cinnamon's
+ * version).
+ *
+ * Cinnamon 6.0-6.6 keep the clone's actor in `window.actor` and the scale in
+ * `box.scale`; in 6.8 the clone is the actor and the scale is
+ * `box.thumbnail_scale`.
+ *
+ * Returns: false to run Cinnamon's original instead
+ */
 function expoOverviewModeOn(thumb) {
+
     if (!settings.getValue('expo-enabled'))
         return false;
     const boxScale = thumb.box.thumbnail_scale !== undefined

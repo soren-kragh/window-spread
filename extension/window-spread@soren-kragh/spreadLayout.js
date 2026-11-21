@@ -9,48 +9,13 @@
 // at the end. The pipeline and the guarantees are described in DEVELOPMENT.md
 // (sections 3 and 4) at https://github.com/soren-kragh/window-spread.
 //
-// SpreadLayout.compute(windows, monitor, algorithm, [settings])
-//     windows    [{ id, x, y, w, h }]: the real window frames (finite, sizes
-//                above 0, unique numeric ids). Minimized windows are passed
-//                with their normal frame.
-//     monitor    { x, y, w, h }: the area to use, in the same coordinates.
-//     algorithm  one of SpreadLayout.ALGORITHMS.
-//     settings   from SpreadLayout.settings(); omitted: the defaults.
-//     Returns { targets, score, info }:
-//       targets  [{ id, x, y, w, h, scale }], one per window, where scale is
-//                w / the window's real width
-//       score    { total, size, sizes, movement, relations, overlap },
-//                lower is better
-//       info     diagnostics, see compute()
-//     Throws on input it can't lay out, and on settings outside LIMITS
-//     (section 9).
-//
-// SpreadLayout.settings(algorithm, [overrides])
-//     The settings of one algorithm: DEFAULTS.common, DEFAULTS.scoring and
-//     the algorithm's own, with `overrides` on top. For the optimizer also
-//     pushStart and rowsStart, the settings of the layouts it starts from.
-//
-// SpreadLayout.DEFAULTS
-//     All default settings (section 1 below).
-//
-// SpreadLayout.ALGORITHMS
-//     ['optimizer', 'push', 'rows', 'grid']
-//
-// SpreadLayout.createCache()
-//     Returns { compute(windows, monitor, algorithm, settings, slot),
-//     forget(slot), clear() }. Its compute() reuses the slot's last result,
-//     marked `cached: true`, when the windows (in any order), the monitor, the
-//     algorithm and the settings are all the same.
-//
-// SpreadLayout.score(targets, windows, monitor, settings)
-//     Scores any layout as compute() does. With `centered`, compute() scores
-//     its layout before centering it, so this can differ for its targets.
-//
-// SpreadLayout.random(seed)
-//     The engine's deterministic random generator, for reproducible test data.
+// The public API, SpreadLayout: compute(), settings(), createCache() and
+// score() (documented in section 9), random() (section 3), DEFAULTS (all
+// default settings, section 1) and ALGORITHMS: ['optimizer', 'push', 'rows',
+// 'grid'].
 //
 // Short names used throughout:
-//     ws      the real windows, { id, x, y, w, h }
+//     windows the real windows, { id, x, y, w, h }
 //     S       the settings, from settings()
 //     A       the work area, from workArea()
 //     items   the windows as prepared by prep(), in canonical order
@@ -242,8 +207,15 @@ function createSpreadLayout() {
 
     // 3. Small helpers --------------------------------------------------------
 
-    // Deterministic random generator (mulberry32): returns a function giving
-    // numbers in [0, 1).
+    /**
+     * random:
+     * @seed: an integer
+     *
+     * The engine's deterministic random generator (mulberry32). Public, for
+     * reproducible test data.
+     *
+     * Returns: a function giving numbers in [0, 1)
+     */
     function random(seed) {
         let a = seed | 0;
         return function() {
@@ -350,8 +322,8 @@ function createSpreadLayout() {
 
     // The processing order, by geometry alone: center y, center x, width,
     // height, then id. Stacking order is never read.
-    function canonical(ws) {
-        return ws.slice().sort((a, b) =>
+    function canonical(windows) {
+        return windows.slice().sort((a, b) =>
             a.y + a.h / 2 - (b.y + b.h / 2) ||
             a.x + a.w / 2 - (b.x + b.w / 2) ||
             a.w - b.w ||
@@ -363,15 +335,15 @@ function createSpreadLayout() {
     // factor f, and the layout size (lw, lh) = real size * f, which all
     // uniform-scale algorithms work in. f is 1 for the largest window; below
     // fidelity 1, smaller ones grow toward its area.
-    function prep(ws, S) {
-        const items = canonical(ws).map(w => ({
+    function prep(windows, S) {
+        const items = canonical(windows).map(w => ({
             id: w.id,
             ow: w.w,
             oh: w.h,
             cx: w.x + w.w / 2,
             cy: w.y + w.h / 2,
         }));
-        const amax = Math.max(...items.map(i => i.ow * i.oh));
+        const amax = Math.max(...items.map(it => it.ow * it.oh));
         for (const it of items) {
             it.f = Math.pow(amax / (it.ow * it.oh), (1 - S.fidelity) / 2);
             it.lw = it.ow * it.f;
@@ -403,7 +375,7 @@ function createSpreadLayout() {
     // the gaps in layout units, assuming the thumbnails cover `density` of the
     // work area (the final scale isn't known yet).
     function estPad(items, S, A, density = INTERNAL.DENSITY_GUESS) {
-        const sum = items.reduce((s, i) => s + i.lw * i.lh, 0);
+        const sum = items.reduce((s, it) => s + it.lw * it.lh, 0);
         const est = Math.min(1, Math.sqrt(A.w * A.h * density / sum));
         const g = gaps(S);
         return { x: g.x / est, y: g.y / est };
@@ -419,8 +391,8 @@ function createSpreadLayout() {
     // passes used.
     function resolve(R, maxPasses, strength, matchShape, A, rng) {
         const target = A.w / A.h;
-        let it = 0;
-        for (; it < maxPasses; it++) {
+        let pass = 0;
+        for (; pass < maxPasses; pass++) {
             let bx = 1;
             let by = 1;
             if (matchShape > 0) {
@@ -473,7 +445,7 @@ function createSpreadLayout() {
             if (!moved)
                 break;
         }
-        return it;
+        return pass;
     }
 
     // If the real final scale is larger than first guessed, the gaps on screen
@@ -512,9 +484,9 @@ function createSpreadLayout() {
         const bcx = (b.x1 + b.x2) / 2;
         const bcy = (b.y1 + b.y2) / 2;
         return items.map((it, i) => {
-            const sc = Math.min(s * it.f, S.maxScale);
+            const scale = Math.min(s * it.f, S.maxScale);
             return rectC(it.id, A.cx + (R[i].x - bcx) * s, A.cy + (R[i].y - bcy) * s,
-                it.ow * sc, it.oh * sc, it.ow, it.oh);
+                it.ow * scale, it.oh * scale, it.ow, it.oh);
         });
     }
 
@@ -535,18 +507,18 @@ function createSpreadLayout() {
     // thumbnails, or in layout units). Returns pen(X, Y, i, j), a pair's cost
     // at centers X, Y, and relNorm, the sum of the pair weights.
     //
-    // With the direction method (rows: true), the pairs are also given as n x n
-    // arrays for the hot loops: at k = i * n + j, RW[k] is the weight of the
-    // pair (i, j) and (RUX[k], RUY[k]) the real direction from i to j.
+    // With the direction method (dirArrays: true), the pairs are also given as
+    // n x n arrays for the hot loops: at k = i * n + j, RW[k] is the weight of
+    // the pair (i, j) and (RUX[k], RUY[k]) the real direction from i to j.
     function makeRelations(OX, OY, OW, OH, NW, NH, S, diag) {
         const n = OX.length;
         const order = S.relationsMethod === 'order';
         const relOn = S.wRelations > 0;
-        const rows = relOn && !order;
+        const dirArrays = relOn && !order;
         const pairs = order ? new Array(n * n) : null;
-        const RW = rows ? new Float64Array(n * n) : null;
-        const RUX = rows ? new Float64Array(n * n) : null;
-        const RUY = rows ? new Float64Array(n * n) : null;
+        const RW = dirArrays ? new Float64Array(n * n) : null;
+        const RUX = dirArrays ? new Float64Array(n * n) : null;
+        const RUY = dirArrays ? new Float64Array(n * n) : null;
         let relNorm = 0;
         if (relOn) {
             const near = INTERNAL.NEAR * diag;
@@ -611,15 +583,15 @@ function createSpreadLayout() {
                    pr.cy * clamp(-pr.sy * ndy / pr.ny, 0, 1);
         };
 
-        return { relOn, relNorm, pen, rows, RW, RUX, RUY, pairs };
+        return { relOn, relNorm, pen, dirArrays, RW, RUX, RUY, pairs };
     }
 
     // A scorer for thumbnails T (with fixed sizes): parts(X, Y) gives the full
     // score at centers X, Y. Also returns the pieces the polish uses itself:
     // the real centers OX/OY, the relations, and the weights kDisp, kRel and
     // kOv of the movement, relations and overlap terms.
-    function makeScorer(T, ws, S, A) {
-        const by = new Map(ws.map(w => [w.id, w]));
+    function makeScorer(T, windows, S, A) {
+        const by = new Map(windows.map(w => [w.id, w]));
         const n = T.length;
         const O = T.map(t => by.get(t.id));
         const amax = Math.max(...O.map(w => w.w * w.h));
@@ -700,21 +672,21 @@ function createSpreadLayout() {
     }
 
     // The score of finished thumbnails T.
-    function scoreLayout(T, ws, S, A) {
-        return makeScorer(T, ws, S, A).parts(T.map(t => t.x + t.w / 2),
+    function scoreLayout(T, windows, S, A) {
+        return makeScorer(T, windows, S, A).parts(T.map(t => t.x + t.w / 2),
                                              T.map(t => t.y + t.h / 2));
     }
 
     // 7. Algorithms -----------------------------------------------------------
-    // Each is called with (ws, S, A, info), where info collects diagnostics,
-    // and returns thumbnail rectangles { id, x, y, w, h, ow, oh }.
+    // Each is called with (windows, S, A, info), where info collects
+    // diagnostics, and returns thumbnail rectangles { id, x, y, w, h, ow, oh }.
 
     // Equal grid: equal cells, each window shrunk to fit its own (so windows
     // are scaled unevenly, and size fidelity is ignored). Windows are assigned
     // to cells so the total distance from their real centers to their cells'
     // centers is smallest (Hungarian method).
-    function layoutGrid(ws, S, A) {
-        const items = prep(ws, { ...S, fidelity: 1 });
+    function layoutGrid(windows, S, A) {
+        const items = prep(windows, { ...S, fidelity: 1 });
         const n = items.length;
         const cols = Math.ceil(Math.sqrt(n));
         const rows = Math.ceil(n / cols);
@@ -745,23 +717,24 @@ function createSpreadLayout() {
 
         return items.map((it, k) => {
             const cell = cells[cellOf[k]];
-            const sc = Math.min(cw / it.ow, ch / it.oh, S.maxScale);
-            return rectC(it.id, cell.x, cell.y, it.ow * sc, it.oh * sc, it.ow, it.oh);
+            const scale = Math.min(cw / it.ow, ch / it.oh, S.maxScale);
+            return rectC(it.id, cell.x, cell.y, it.ow * scale, it.oh * scale,
+                it.ow, it.oh);
         });
     }
 
     // Push apart: start at the real positions, push overlapping pairs apart,
     // and scale the whole arrangement uniformly to fit.
-    function layoutPush(ws, S, A, info) {
-        const items = prep(ws, S);
+    function layoutPush(windows, S, A, info) {
+        const items = prep(windows, S);
         const pad = estPad(items, S, A);
         const R = items.map(it => ({
             x: it.cx, y: it.cy, w: it.lw + pad.x, h: it.lh + pad.y,
         }));
-        const it = resolve(R, S.passes, S.strength, S.matchShape, A,
+        const passes = resolve(R, S.passes, S.strength, S.matchShape, A,
             random(INTERNAL.SEED_TIES));
-        info.passes = it;
-        info.hitLimit = it >= S.passes;
+        info.passes = passes;
+        info.hitLimit = passes >= S.passes;
         enforceGap(items, R, pad, A, S);
         return finalize(items, R, pad, A, S);
     }
@@ -769,15 +742,15 @@ function createSpreadLayout() {
     // Ordered rows: rows from top to bottom by vertical position, left to right
     // within a row. The row count giving the largest scale wins (or S.rows, if
     // set).
-    function layoutRows(ws, S, A) {
-        const items = prep(ws, S);
+    function layoutRows(windows, S, A) {
+        const items = prep(windows, S);
         const n = items.length;
         const g = gaps(S);
         const gx = g.x;
         const gy = g.y;
         const byY = items.slice().sort((a, b) =>
             a.cy - b.cy || a.cx - b.cx || a.id - b.id);
-        const total = byY.reduce((s, i) => s + i.lw, 0);
+        const total = byY.reduce((s, it) => s + it.lw, 0);
 
         // r rows, filled in reading order; s = the scale at which they fit
         const tryRows = r => {
@@ -798,8 +771,8 @@ function createSpreadLayout() {
             let sumH = 0;
             for (const row of rows) {
                 s = Math.min(s,
-                    (A.w - gx * (row.length - 1)) / row.reduce((q, i) => q + i.lw, 0));
-                sumH += Math.max(...row.map(i => i.lh));
+                    (A.w - gx * (row.length - 1)) / row.reduce((q, it) => q + it.lw, 0));
+                sumH += Math.max(...row.map(it => it.lh));
             }
             s = Math.min(s, (A.h - gy * (rows.length - 1)) / sumH);
             return { s, rows };
@@ -822,17 +795,17 @@ function createSpreadLayout() {
 
         const { s, rows } = best;
         const out = [];
-        const H = rows.reduce((q, row) => q + Math.max(...row.map(i => i.lh)) * s, 0) +
+        const H = rows.reduce((q, row) => q + Math.max(...row.map(it => it.lh)) * s, 0) +
             gy * (rows.length - 1);
         let y = A.cy - H / 2;
         for (const row of rows) {
-            const rh = Math.max(...row.map(i => i.lh)) * s;
-            const rw = row.reduce((q, i) => q + i.lw * s, 0) + gx * (row.length - 1);
+            const rh = Math.max(...row.map(it => it.lh)) * s;
+            const rw = row.reduce((q, it) => q + it.lw * s, 0) + gx * (row.length - 1);
             let x = A.cx - rw / 2;
             for (const it of row) {
-                const sc = Math.min(s * it.f, S.maxScale);
+                const scale = Math.min(s * it.f, S.maxScale);
                 out.push(rectC(it.id, x + it.lw * s / 2, y + rh / 2,
-                    it.ow * sc, it.oh * sc, it.ow, it.oh));
+                    it.ow * scale, it.oh * scale, it.ow, it.oh));
                 x += it.lw * s + gx;
             }
             y += rh + gy;
@@ -849,7 +822,7 @@ function createSpreadLayout() {
     //   for grid cells)
     // The push-apart and ordered-rows layouts are handed on to the
     // safeguard (`shared`), which would otherwise compute them again.
-    function makeStartPositions(ws, S, A, items, R0, padStart, shared) {
+    function makeStartPositions(windows, S, A, items, R0, padStart, shared) {
         const n = items.length;
         const startCache = {};
         const startPos = kind => {
@@ -868,8 +841,8 @@ function createSpreadLayout() {
                 let T;
                 try {
                     T = kind === 'rows'
-                        ? layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A)
-                        : layoutGrid(ws, S, A);
+                        ? layoutRows(windows, { ...S, rows: S.rowsStart.rows }, A)
+                        : layoutGrid(windows, S, A);
                 } catch (e) {
                     // no room for ordered rows: start from push apart instead
                     return (startCache[kind] = startPos('push'));
@@ -923,7 +896,7 @@ function createSpreadLayout() {
         const relOn = rel.relOn;
         const relPen = rel.pen;
         const pairs = rel.pairs;
-        const relRows = rel.rows;
+        const dirArrays = rel.dirArrays;
         const RW = rel.RW;
         const RUX = rel.RUX;
         const RUY = rel.RUY;
@@ -1208,7 +1181,7 @@ function createSpreadLayout() {
                         gY[j] -= gy;
                     }
 
-                    if (relRows) {
+                    if (dirArrays) {
                         // the direction method: dirPen(), and its gradient
                         const k = i * n + j;
                         const wt = RW[k];
@@ -1267,10 +1240,10 @@ function createSpreadLayout() {
     // through overlaps and then separates. Several starts race; at checkpoints
     // the worse half is dropped. The starts come from makeStartPositions(), the
     // score and its gradient from makeSearch().
-    function layoutOptimizer(ws, S, A, info, shared) {
+    function layoutOptimizer(windows, S, A, info, shared) {
         // R0 is the real positions with push apart's padding, so the 'push'
         // start is exactly the push-apart algorithm's.
-        const items = prep(ws, S);
+        const items = prep(windows, S);
         const n = items.length;
         const padStart = estPad(items, S, A);
         const R0 = items.map(it => ({
@@ -1283,7 +1256,7 @@ function createSpreadLayout() {
         // out larger.
         const pad = estPad(items, S, A, INTERNAL.DENSITY_SEARCH);
 
-        const startPos = makeStartPositions(ws, S, A, items, R0, padStart, shared);
+        const startPos = makeStartPositions(windows, S, A, items, R0, padStart, shared);
 
         const KINDS = INTERNAL.START_KINDS;
         const kindOf = c =>
@@ -1400,9 +1373,9 @@ function createSpreadLayout() {
             // without dropping weak starts: the best finished start wins
             let best = Infinity;
             for (const st of alive) {
-                const sc = searchScore(st.X, st.Y);
-                if (sc < best) {
-                    best = sc;
+                const value = searchScore(st.X, st.Y);
+                if (value < best) {
+                    best = value;
                     win = st;
                 }
             }
@@ -1436,8 +1409,8 @@ function createSpreadLayout() {
 
     // Move the finished arrangement as a whole by the mean offset of the real
     // window centers from the thumbnail centers, within the work area.
-    function placeNearReal(T, ws, A) {
-        const by = new Map(ws.map(w => [w.id, w]));
+    function placeNearReal(T, windows, A) {
+        const by = new Map(windows.map(w => [w.id, w]));
         let mx = 0;
         let my = 0;
         let x1 = Infinity;
@@ -1488,9 +1461,9 @@ function createSpreadLayout() {
     // by local() before and after. The near list, anyOv and idleAt only skip
     // work; the result is the same as checking every move against every
     // thumbnail.
-    function polishLayout(T, ws, S, A) {
-        const sc = makeScorer(T, ws, S, A);
-        const n = sc.n;
+    function polishLayout(T, windows, S, A) {
+        const scorer = makeScorer(T, windows, S, A);
+        const n = scorer.n;
         const G = gaps(S);
         const g = Math.min(G.x, G.y);
         const ex = G.x - g;
@@ -1499,19 +1472,19 @@ function createSpreadLayout() {
             return { T, moved: 0, gain: 0 };
 
         // the thumbnails' sizes (fixed) and centers (moved by the polish)
-        const Wt = Float64Array.from(sc.Wt);
-        const Ht = Float64Array.from(sc.Ht);
+        const Wt = Float64Array.from(scorer.Wt);
+        const Ht = Float64Array.from(scorer.Ht);
         const X = Float64Array.from(T, t => t.x + t.w / 2);
         const Y = Float64Array.from(T, t => t.y + t.h / 2);
 
-        const OX = sc.OX;
-        const OY = sc.OY;
-        const kDisp = sc.kDisp;
-        const kRel = sc.kRel;
-        const kOv = sc.kOv;
-        const rel = sc.rel;
+        const OX = scorer.OX;
+        const OY = scorer.OY;
+        const kDisp = scorer.kDisp;
+        const kRel = scorer.kRel;
+        const kOv = scorer.kOv;
+        const rel = scorer.rel;
         const relOn = rel.relOn;
-        const rows = rel.rows;
+        const dirArrays = rel.dirArrays;
         const RW = rel.RW;
         const RUX = rel.RUX;
         const RUY = rel.RUY;
@@ -1522,7 +1495,7 @@ function createSpreadLayout() {
         const ay1 = A.y - 0.5;
         const ay2 = A.y + A.h + 0.5;
 
-        const avg = sc.Wt.reduce((q, w, i) => q + Math.sqrt(w * Ht[i]), 0) / n;
+        const avg = scorer.Wt.reduce((q, w, i) => q + Math.sqrt(w * Ht[i]), 0) / n;
         const step0 = avg * INTERNAL.POLISH_FIRST_STEP;
 
         // The separation of thumbnail i at (x, y) from thumbnail j: the larger
@@ -1559,7 +1532,7 @@ function createSpreadLayout() {
             const dx = x - OX[i];
             const dy = y - OY[i];
             let v = kDisp * Math.sqrt(dx * dx + dy * dy);
-            if (rows && !full) {
+            if (dirArrays && !full) {
                 for (let j = 0, k = i * n; j < n; j++, k++) {
                     const wt = RW[k];
                     if (wt)
@@ -1723,16 +1696,16 @@ function createSpreadLayout() {
     // (`shared`), identical to building them here. A candidate's polish is
     // skipped when even its best possible polished score couldn't win
     // (polishLowerBound()): the same outcome as polishing it and losing.
-    function optimizerSafeguard(T, ws, S, A, info, shared) {
+    function optimizerSafeguard(T, windows, S, A, info, shared) {
         let best = T;
-        let bestScore = scoreLayout(T, ws, S, A).total;
+        let bestScore = scoreLayout(T, windows, S, A).total;
         let from = null;
         for (const k of ['push', 'rows']) {
             let C;
             if (k === 'rows') {
                 try {
                     C = shared.rows ||
-                        layoutRows(ws, { ...S, rows: S.rowsStart.rows }, A);
+                        layoutRows(windows, { ...S, rows: S.rowsStart.rows }, A);
                 } catch (e) {
                     // no room for ordered rows: nothing to compare with
                     continue;
@@ -1745,7 +1718,7 @@ function createSpreadLayout() {
             } else {
                 // its own settings; its diagnostics aren't kept
                 const P = S.pushStart;
-                C = layoutPush(ws, {
+                C = layoutPush(windows, {
                     ...S,
                     passes: P.passes,
                     strength: P.strength,
@@ -1753,18 +1726,18 @@ function createSpreadLayout() {
                 }, A, {});
             }
 
-            C = placeNearReal(C, ws, A);
+            C = placeNearReal(C, windows, A);
             if (S.polish || (k === 'push' && S.pushStart.polish)) {
                 // can't win, polished or not
-                if (polishLowerBound(C, ws, S, A) >= bestScore + 1e-9)
+                if (polishLowerBound(C, windows, S, A) >= bestScore + 1e-9)
                     continue;
-                C = polishLayout(C, ws, S, A).T;
+                C = polishLayout(C, windows, S, A).T;
             }
             // only a clear win (beyond rounding) replaces the current best
-            const sc = scoreLayout(C, ws, S, A).total;
-            if (sc < bestScore - 1e-12) {
+            const total = scoreLayout(C, windows, S, A).total;
+            if (total < bestScore - 1e-12) {
                 best = C;
-                bestScore = sc;
+                bestScore = total;
                 from = k;
             }
         }
@@ -1788,14 +1761,14 @@ function createSpreadLayout() {
     //   that is cheaper to fix).
     // * Over pairs that share no thumbnail these add up; they are picked
     //   largest m first.
-    function polishLowerBound(C, ws, S, A) {
-        const sc = makeScorer(C, ws, S, A);
-        const n = sc.n;
-        const OX = sc.OX;
-        const OY = sc.OY;
+    function polishLowerBound(C, windows, S, A) {
+        const scorer = makeScorer(C, windows, S, A);
+        const n = scorer.n;
+        const OX = scorer.OX;
+        const OY = scorer.OY;
         const X = C.map(t => t.x + t.w / 2);
         const Y = C.map(t => t.y + t.h / 2);
-        const p = sc.parts(X, Y);
+        const p = scorer.parts(X, Y);
         const avg = C.reduce((q, t) => q + Math.sqrt(t.w * t.h), 0) / Math.max(1, n);
 
         // the number of step sizes the polish tries
@@ -1839,7 +1812,7 @@ function createSpreadLayout() {
             taken[i] = taken[j] = 1;
             move += m;
         }
-        return p.size + p.sizes + sc.kDisp * move;
+        return p.size + p.sizes + scorer.kDisp * move;
     }
 
     // Gap filling: each thumbnail, smallest first, grows into free space, up to
@@ -1953,6 +1926,17 @@ function createSpreadLayout() {
         }
     }
 
+    /**
+     * settings:
+     * @algorithm: one of ALGORITHMS
+     * @overrides: (optional) settings to change
+     *
+     * Returns: the settings of one algorithm: DEFAULTS.common,
+     * DEFAULTS.scoring and the algorithm's own, with @overrides on top. For
+     * the optimizer also pushStart and rowsStart, the settings of the layouts
+     * it starts from (each also filled in from the defaults where @overrides
+     * leaves something out).
+     */
     function settings(algorithm, overrides) {
         if (!ALGORITHMS[algorithm])
             throw new Error('Unknown spread algorithm: ' + algorithm);
@@ -1969,25 +1953,46 @@ function createSpreadLayout() {
             };
             S.rowsStart = { rows: DEFAULTS.rows.rows };
         }
-        return { ...S, ...(overrides || {}) };
+        const all = { ...S, ...(overrides || {}) };
+        if (algorithm === 'optimizer') {
+            all.pushStart = { ...S.pushStart, ...all.pushStart };
+            all.rowsStart = { ...S.rowsStart, ...all.rowsStart };
+        }
+        return all;
     }
 
-    // The full pipeline: the algorithm, placement toward the real windows,
-    // polish, the optimizer's safeguard, gap filling, the score, and centering
-    // (if asked for). `info` holds diagnostics, where they apply:
-    //   push        passes, hitLimit
-    //   optimizer   starts, winningStart (from 1), winningKind, startsPerRound,
-    //               stepsPerStart, keptStart (null, or the layout the safeguard
-    //               kept)
-    //   polish      polishMoves, polishGain
+    /**
+     * compute:
+     * @windows: the real window frames, [{ id, x, y, w, h }]: finite, sizes
+     * above 0, unique numeric ids. Minimized windows are passed with their
+     * normal frame.
+     * @monitor: the area to use, { x, y, w, h }, in the same coordinates
+     * @algorithm: one of ALGORITHMS
+     * @S: (optional) the settings, as settings() gives them; anything left
+     * out is taken from the defaults
+     *
+     * Runs the full pipeline: the algorithm, placement toward the real
+     * windows, polish, the optimizer's safeguard, gap filling, the score, and
+     * centering (if asked for).
+     *
+     * Returns: { targets, score, info }, where targets are the thumbnails,
+     * [{ id, x, y, w, h, scale }], one per window, scale being w / the real
+     * width; score is { total, size, sizes, movement, relations, overlap },
+     * lower is better; and info holds diagnostics, where they apply:
+     *   push        passes, hitLimit
+     *   optimizer   starts, winningStart (from 1), winningKind,
+     *               startsPerRound, stepsPerStart, keptStart (null, or the
+     *               layout the safeguard kept)
+     *   polish      polishMoves, polishGain
+     * Throws on input it can't lay out, and on settings outside LIMITS.
+     */
     function compute(windows, monitor, algorithm, S) {
         const algo = ALGORITHMS[algorithm];
         if (!algo)
             throw new Error('Unknown spread algorithm: ' + algorithm);
-        S = S || settings(algorithm);
-        // fill in the start settings
-        if (algorithm === 'optimizer' && (!S.pushStart || !S.rowsStart))
-            S = settings(algorithm, S);
+        // Fill in anything not given: a setting left out would otherwise turn
+        // into NaN, and the equal grid's cell assignment never finishes on NaN.
+        S = settings(algorithm, S);
         checkSettings(S, '');
         if (S.pushStart)
             checkSettings(S.pushStart, 'pushStart.');
@@ -2018,30 +2023,30 @@ function createSpreadLayout() {
         // optimizer can amplify that).
         const ox = monitor.x;
         const oy = monitor.y;
-        const ws = windows.map(w => ({
+        const shifted = windows.map(w => ({
             id: w.id, x: w.x - ox, y: w.y - oy, w: w.w, h: w.h,
         }));
         const A = workArea({ x: 0, y: 0, w: monitor.w, h: monitor.h }, S.margin);
 
         // what the optimizer hands on to its safeguard
         const shared = {};
-        let T = algo.run(ws, S, A, info, shared);
+        let T = algo.run(shifted, S, A, info, shared);
         if (algo.uniformScale)
-            T = placeNearReal(T, ws, A);
+            T = placeNearReal(T, shifted, A);
         if (algo.polishable && S.polish) {
-            const r = polishLayout(T, ws, S, A);
+            const r = polishLayout(T, shifted, S, A);
             T = r.T;
             info.polishMoves = r.moved;
             info.polishGain = r.gain;
         }
         if (algorithm === 'optimizer')
-            T = optimizerSafeguard(T, ws, S, A, info, shared);
+            T = optimizerSafeguard(T, shifted, S, A, info, shared);
         if (algo.uniformScale && S.fill)
             T = fillGaps(T, S, A);
 
         // Score before centering: centering is a final shift only, and nothing
         // (the score included) depends on it.
-        const sc = scoreLayout(T, ws, S, A);
+        const layoutScore = scoreLayout(T, shifted, S, A);
         if (algo.uniformScale && S.centered)
             T = centerLayout(T, A);
 
@@ -2050,14 +2055,30 @@ function createSpreadLayout() {
             targets: T.map(t => ({
                 id: t.id, x: t.x + ox, y: t.y + oy, w: t.w, h: t.h, scale: t.w / t.ow,
             })),
-            score: sc,
+            score: layoutScore,
             info,
         };
     }
 
+    /**
+     * score:
+     * @targets: thumbnails, as compute() returns them
+     * @windows: the real window frames
+     * @monitor: the area used
+     * @S: the settings (anything left out is taken from the defaults)
+     *
+     * Scores any layout as compute() does. With `centered`, compute() scores
+     * its layout before centering it, so this can differ for its targets.
+     *
+     * Returns: { total, size, sizes, movement, relations, overlap }, or null
+     * without targets
+     */
     function score(targets, windows, monitor, S) {
         if (!targets.length)
             return null;
+        // anything not given, from the defaults
+        S = { ...DEFAULTS.common, ...DEFAULTS.scoring, ...S };
+
         return scoreLayout(targets, windows, S, workArea(monitor, S.margin));
     }
 
@@ -2077,14 +2098,14 @@ function createSpreadLayout() {
     // id (the given order may follow stacking), and only the settings the
     // engine uses count.
     function cacheKey(windows, monitor, algorithm, S) {
-        const ws = windows
+        const entries = windows
             .map(w => [String(w.id), w.x, w.y, w.w, w.h])
             .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
         const used = {};
         for (const k of Object.keys(settings(algorithm)))
             used[k] = S[k];
         return stableText(
-            [algorithm, [monitor.x, monitor.y, monitor.w, monitor.h], ws, used]
+            [algorithm, [monitor.x, monitor.y, monitor.w, monitor.h], entries, used]
         );
     }
 
@@ -2098,6 +2119,14 @@ function createSpreadLayout() {
         };
     }
 
+    /**
+     * createCache:
+     *
+     * Returns: a cache, { compute(windows, monitor, algorithm, settings,
+     * slot), forget(slot), clear() }. Its compute() is compute(), but reuses
+     * the slot's last result, marked `cached: true`, when the windows (in any
+     * order), the monitor, the algorithm and the settings are all the same.
+     */
     function createCache() {
         // slot -> { key, result }
         const slots = new Map();
@@ -2130,7 +2159,8 @@ function createSpreadLayout() {
         return Object.freeze(o);
     };
 
-    // the public API (see the top of the file)
+    // the public API
+
     return Object.freeze({
         DEFAULTS: deepFreeze(DEFAULTS),
         ALGORITHMS: Object.freeze(Object.keys(ALGORITHMS)),

@@ -64,7 +64,8 @@ tests/                            automated checks (section 7)
 
 ### Engine (`spreadLayout.js`)
 
-The public API is documented at the top of the file. `compute()` runs:
+The public API is documented in the file (section 9, at `compute()` and its
+neighbors). `compute()` runs:
 
 1. **Algorithm**, one of
    * `optimizer`: gradient descent over window centers in "layout units" (true
