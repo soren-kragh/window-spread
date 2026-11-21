@@ -840,35 +840,17 @@ function createSpreadLayout() {
         return out;
     }
 
-    // Optimizer: gradient descent over the window centers in layout units (one
-    // shared scale, exact relative sizes), on a smoothed search score. The
-    // overlap cost starts low and grows, so the arrangement first contracts
-    // through overlaps and then separates. Several starts race; at checkpoints
-    // the worse half is dropped.
-    function layoutOptimizer(ws, S, A, info, shared) {
-        // R0 is the real positions with push apart's padding, so the 'push'
-        // start is exactly the push-apart algorithm's.
-        const items = prep(ws, S);
+    // The optimizer's starting points, as startPos(kind) gives them (each kind
+    // computed once):
+    // * 'none': the real (overlapping) positions
+    // * 'push': push apart, with its own settings (S.pushStart)
+    // * 'rows', 'grid': those layouts' centers with their overall scale
+    //   undone, then overlaps resolved (true-size windows can be too big
+    //   for grid cells)
+    // The push-apart and ordered-rows layouts are handed on to the
+    // safeguard (`shared`), which would otherwise compute them again.
+    function makeStartPositions(ws, S, A, items, R0, padStart, shared) {
         const n = items.length;
-        const padStart = estPad(items, S, A);
-        const R0 = items.map(it => ({
-            x: it.cx, y: it.cy, w: it.lw + padStart.x, h: it.lh + padStart.y,
-        }));
-        if (n < 2)
-            return finalize(items, R0, padStart, A, S);
-
-        // The search pads less, so it packs tighter and its scale and gaps come
-        // out larger.
-        const pad = estPad(items, S, A, INTERNAL.DENSITY_SEARCH);
-
-        // The starting points:
-        // * 'none': the real (overlapping) positions
-        // * 'push': push apart, with its own settings (S.pushStart)
-        // * 'rows', 'grid': those layouts' centers with their overall scale
-        //   undone, then overlaps resolved (true-size windows can be too big
-        //   for grid cells)
-        // The push-apart and ordered-rows layouts are handed on to the
-        // safeguard (`shared`), which would otherwise compute them again.
         const startCache = {};
         const startPos = kind => {
             if (startCache[kind])
@@ -911,10 +893,15 @@ function createSpreadLayout() {
                 Y: Float64Array.from(R, r => r.y),
             });
         };
+        return startPos;
+    }
 
-        const KINDS = INTERNAL.START_KINDS;
-        const kindOf = c =>
-            S.startFrom === 'mixed' ? KINDS[c % KINDS.length] : (S.startFrom || 'push');
+    // The optimizer's objective, for the layout prepared in `items` with the
+    // padding `pad`: searchScore(X, Y), and gradient(X, Y, mu), which returns
+    // the smoothed score and leaves its gradient in gX, gY. Also returns the
+    // padded sizes W, H and their average size avg.
+    function makeSearch(items, pad, S, A) {
+        const n = items.length;
 
         // In layout units: W, H the padded sizes, OX, OY the real centers, sumA
         // the total padded area, avg the mean of sqrt(W * H).
@@ -1270,6 +1257,40 @@ function createSpreadLayout() {
             }
             return f + kOv * o + kRel * r;
         };
+
+        return { W, H, avg, gX, gY, searchScore, gradient };
+    }
+
+    // Optimizer: gradient descent over the window centers in layout units (one
+    // shared scale, exact relative sizes), on a smoothed search score. The
+    // overlap cost starts low and grows, so the arrangement first contracts
+    // through overlaps and then separates. Several starts race; at checkpoints
+    // the worse half is dropped. The starts come from makeStartPositions(), the
+    // score and its gradient from makeSearch().
+    function layoutOptimizer(ws, S, A, info, shared) {
+        // R0 is the real positions with push apart's padding, so the 'push'
+        // start is exactly the push-apart algorithm's.
+        const items = prep(ws, S);
+        const n = items.length;
+        const padStart = estPad(items, S, A);
+        const R0 = items.map(it => ({
+            x: it.cx, y: it.cy, w: it.lw + padStart.x, h: it.lh + padStart.y,
+        }));
+        if (n < 2)
+            return finalize(items, R0, padStart, A, S);
+
+        // The search pads less, so it packs tighter and its scale and gaps come
+        // out larger.
+        const pad = estPad(items, S, A, INTERNAL.DENSITY_SEARCH);
+
+        const startPos = makeStartPositions(ws, S, A, items, R0, padStart, shared);
+
+        const KINDS = INTERNAL.START_KINDS;
+        const kindOf = c =>
+            S.startFrom === 'mixed' ? KINDS[c % KINDS.length] : (S.startFrom || 'push');
+
+        const { W, H, avg, gX, gY, searchScore, gradient } =
+            makeSearch(items, pad, S, A);
 
         // Starts beyond the first kindsUsed repeat a kind and are shaken.
         const kindsUsed = S.startFrom === 'mixed' ? KINDS.length : 1;
