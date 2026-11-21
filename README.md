@@ -126,6 +126,7 @@ window-spread/
 ├── tools/
 │   ├── build-schema.js              generates settings-schema.json
 │   ├── build-spices.js              builds the package for Cinnamon Spices
+│   ├── compare-engine.js            checks the engine's results are unchanged
 │   └── spices/                      Spices-specific files (info.json, README)
 └── tests/                           automated checks: node tests/run-all.js
 ```

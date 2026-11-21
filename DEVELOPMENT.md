@@ -34,6 +34,7 @@ extension/window-spread@soren-kragh/
 docs/                             icon source, screenshot, demo video
 tools/build-schema.js             generates settings-schema.json
 tools/build-spices.js             builds the Spices package (section 9)
+tools/compare-engine.js           checks the engine's results are unchanged
 tools/spices/                     Spices' README and info.json
 tests/                            automated checks (section 7)
 ```
@@ -710,7 +711,10 @@ tag stays on what users get:
 1. Change the engine and try it in the lab (it loads the same file).
 2. Changed a default or a setting's label, range or page? Edit `DEFAULTS` or
    `tools/build-schema.js`, then run `node tools/build-schema.js`.
-3. Run `node tests/run-all.js`.
+3. Run `node tests/run-all.js`. For a change that must not change the
+   engine's results (refactoring, renaming, reformatting), also run
+   `node tools/compare-engine.js`: it compares every result bit for bit with
+   the last commit (or a revision given as its argument).
 4. Install the copy as in README's "Updating" and restart Cinnamon (Alt+F2,
    `r`). If defaults changed, choose **Reset to defaults** in the settings
    window's menu.
