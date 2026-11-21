@@ -111,7 +111,7 @@ Only the extension folder is needed to use it; the rest is for development.
 window-spread/
 ├── README.md               this file
 ├── DEVELOPMENT.md          how it works, why, what's verified, open items
-├── LICENSE                 MIT
+├── LICENSE                 GPL-3.0
 ├── extension/
 │   └── window-spread@soren-kragh/   THE EXTENSION (the folder you install)
 │       ├── metadata.json            name, identifier, Cinnamon versions
@@ -163,4 +163,7 @@ defaults** in the settings window: Cinnamon keeps values already set. More in
 
 ## License
 
-MIT; see `LICENSE`. The extension folder carries its own copy.
+Copyright (C) 2026 soren-kragh (https://github.com/soren-kragh/window-spread)
+
+Window Spread is free software, licensed under the GNU General Public License
+version 3 (GPL-3.0); see `LICENSE`. The extension folder carries its own copy.

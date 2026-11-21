@@ -55,6 +55,9 @@ tests/                            automated checks (section 7)
   optional helper, `SpreadLayout.createCache()`.
 * **JavaScript:** nothing newer than about ES2018 (Cinnamon 6.0's engine). The
   tests avoid `?.` and `??` so they run on Mint 21.3's Node 12.
+* **Code style** in the extension folder: Cinnamon's own (4-space indents,
+  single quotes, one statement per line, lines up to about 90 characters). The
+  lab, tests and tools use 2-space indents.
 
 
 ## 3. Architecture
@@ -414,6 +417,10 @@ pre-warming the cache in the background isn't needed.
   always state that difference); the optimizer isn't labeled
   "recommended". The algorithm tooltip uses one paragraph per choice, not
   bullets: GTK wraps tooltips at 70 characters without indenting.
+* **Not in the settings window:** "Keep sizes" (`wSizes`), which never changes
+  a layout in the extension; push apart's pass limit, only a safety limit
+  (it stops when nothing overlaps, long before); and the polish, always on, as
+  it clearly improves both algorithms that use it.
 
 ### 5.12 Expo badges anchored to the visible window
 Cinnamon positions an app icon badge from the window actor's corner, and the
@@ -577,8 +584,8 @@ request to the Spices repository (no GitHub Releases).
 * The Spices README may link to the repository only for bug reports and
   development: Spices forbids pointing users to downloads elsewhere.
 * Icon: render `docs/icon.svg` to the extension's `icon.png` at 256×256.
-* License: MIT, also inside the extension folder, since the Spices
-  repository's default is GPL 2.
+* License: GPL-3.0, like most Spices extensions, also inside the extension
+  folder, since the Spices repository's default is GPL 2.
 
 ### 9.1 One-time setup for Spices
 
